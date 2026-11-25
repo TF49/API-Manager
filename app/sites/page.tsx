@@ -15,7 +15,7 @@ import {
   Loader2,
   Plug,
 } from 'lucide-react';
-import SiteCard from '@/components/SiteCard';
+import SiteRow from '@/components/SiteRow';
 import SiteForm from '@/components/SiteForm';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/components/ToastProvider';
@@ -115,21 +115,20 @@ export default function SitesPage() {
     return matchesSearch && matchesStatus;
   });
 
-  // GSAP stagger entrance for cards & KPI strip
+  // GSAP stagger entrance for list rows
   useGSAP(
     () => {
       if (loading) return;
-      const cards = pageRef.current?.querySelectorAll('.site-card-item');
-      if (cards && cards.length > 0) {
+      const rows = pageRef.current?.querySelectorAll('.site-row-item');
+      if (rows && rows.length > 0) {
         gsap.fromTo(
-          cards,
-          { opacity: 0, y: 18, scale: 0.97 },
+          rows,
+          { opacity: 0, y: 8 },
           {
             opacity: 1,
             y: 0,
-            scale: 1,
-            duration: 0.42,
-            stagger: { amount: 0.25, from: 'start' },
+            duration: 0.32,
+            stagger: { amount: 0.2, from: 'start' },
             ease: 'power3.out',
             clearProps: 'transform',
           }
@@ -583,9 +582,19 @@ export default function SitesPage() {
 
       {/* Site Grid */}
       {loading ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
+        <div
+          style={{
+            background: 'var(--card)',
+            border: '1px solid var(--border)',
+            borderRadius: 14,
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ height: 38, background: 'var(--surface-alt)', borderBottom: '1px solid var(--border)' }} />
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="skeleton" style={{ height: 228, borderRadius: 14 }} />
+            <div key={i} style={{ padding: '12px 20px', borderBottom: i < 5 ? '1px solid var(--border)' : 'none' }}>
+              <div className="skeleton" style={{ height: 28 }} />
+            </div>
           ))}
         </div>
       ) : displaySites.length === 0 ? (
@@ -625,19 +634,57 @@ export default function SitesPage() {
           </p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
-          {displaySites.map((site) => (
-            <SiteCard
-              key={site.id}
-              site={site}
-              onEdit={(s) => {
-                setEditSite(s);
-                setShowForm(true);
-              }}
-              onDeleteRequest={(s) => setDeleteTarget(s)}
-              onRefresh={fetchSites}
-            />
-          ))}
+        <div
+          style={{
+            background: 'var(--card)',
+            border: '1px solid var(--border)',
+            borderRadius: 14,
+            overflow: 'hidden',
+          }}
+        >
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ minWidth: 1040 }}>
+              {/* List Header */}
+              <div
+                className="site-list-grid"
+                style={{
+                  padding: '10px 20px',
+                  borderBottom: '1px solid var(--border)',
+                  background: 'var(--surface-alt)',
+                }}
+              >
+                {['站点', 'Base URL', 'API Key', '状态', '最后测试', '操作'].map((h) => (
+                  <span
+                    key={h}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: 'var(--muted)',
+                      letterSpacing: '0.05em',
+                      textTransform: 'uppercase',
+                      textAlign: h === '操作' ? 'right' : undefined,
+                    }}
+                  >
+                    {h}
+                  </span>
+                ))}
+              </div>
+
+              {displaySites.map((site, idx) => (
+                <SiteRow
+                  key={site.id}
+                  site={site}
+                  isLast={idx === displaySites.length - 1}
+                  onEdit={(s) => {
+                    setEditSite(s);
+                    setShowForm(true);
+                  }}
+                  onDeleteRequest={(s) => setDeleteTarget(s)}
+                  onRefresh={fetchSites}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
