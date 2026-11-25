@@ -1,0 +1,46 @@
+{
+  "name": "api-manager",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:init": "tsx lib/init-db.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "user:create": "tsx scripts/admin.ts user:create",
+    "user:passwd": "tsx scripts/admin.ts user:passwd",
+    "user:disable": "tsx scripts/admin.ts user:disable",
+    "user:enable": "tsx scripts/admin.ts user:enable",
+    "user:list": "tsx scripts/admin.ts user:list",
+    "sessions:revoke": "tsx scripts/admin.ts sessions:revoke",
+    "auth:unlock": "tsx scripts/admin.ts auth:unlock",
+    "secret:rotate": "tsx scripts/rotate-secret.ts"
+  },
+  "dependencies": {
+    "@gsap/react": "^2.1.2",
+    "@next/env": "16.4.6",
+    "@node-rs/argon2": "2.2.2",
+    "gsap": "^3.15.1",
+    "lucide-react": "^1.80.0",
+    "mysql2": "^3.24.6",
+    "next": "16.4.6",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "undici": "8.12.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "4.3.3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.6",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "^5",
+    "vitest": "4.1.12"
+  }
+}
