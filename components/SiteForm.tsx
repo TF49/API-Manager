@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
+import { PRESET_GROUPS } from '@/lib/groups';
 
 interface Props {
   initial?: {
@@ -182,6 +183,48 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
         }
       />
 
+      <div>
+        <label
+          style={{
+            display: 'block',
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'var(--muted)',
+            marginBottom: 6,
+            letterSpacing: '0.03em',
+          }}
+        >
+          快速分组
+        </label>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {PRESET_GROUPS.map((g) => {
+            const active = form.group_tag === g;
+            return (
+              <button
+                key={g}
+                type="button"
+                aria-pressed={active}
+                onClick={() => set('group_tag', active ? '' : g)}
+                style={{
+                  padding: '5px 12px',
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 500,
+                  borderRadius: 20,
+                  background: active
+                    ? 'linear-gradient(135deg, rgba(99,102,241,0.22) 0%, rgba(129,140,248,0.1) 100%)'
+                    : 'transparent',
+                  border: active ? '1px solid rgba(99,102,241,0.45)' : '1px solid var(--border)',
+                  color: active ? '#4338ca' : 'var(--muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                {g}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
           <label
@@ -198,7 +241,7 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
           </label>
           <input
             list="groups-list"
-            placeholder="例：免费 / 付费"
+            placeholder="选择上方分组或自定义"
             value={form.group_tag}
             onChange={(e) => set('group_tag', e.target.value)}
             style={inputStyle}
