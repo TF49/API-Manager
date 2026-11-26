@@ -5,13 +5,14 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { useGSAP } from '@gsap/react';
-import { KeyRound, Server, History, LogOut, UserRound } from 'lucide-react';
+import { KeyRound, Server, History, Layers, LogOut, UserRound } from 'lucide-react';
 import Magnet from './reactbits/Magnet';
 
 gsap.registerPlugin(useGSAP);
 
 const navLinks = [
   { href: '/sites', label: '站点管理', Icon: Server },
+  { href: '/price-lookup', label: '分组查询', Icon: Layers },
   { href: '/history', label: '调用历史', Icon: History },
 ];
 

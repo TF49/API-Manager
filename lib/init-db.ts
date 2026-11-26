@@ -80,7 +80,7 @@ async function initDB() {
       site_id INT NOT NULL,
       site_name VARCHAR(100) DEFAULT NULL,
       model_id VARCHAR(200) DEFAULT NULL COMMENT '被测模型ID',
-      action_type ENUM('test','fetch_models','batch_test','model_test') NOT NULL COMMENT '操作类型',
+      action_type ENUM('test','fetch_models','batch_test','model_test','fetch_groups') NOT NULL COMMENT '操作类型',
       status ENUM('ok','error','quota','timeout') NOT NULL,
       status_code INT DEFAULT NULL,
       latency_ms INT DEFAULT NULL COMMENT '响应延迟(ms)',
@@ -93,8 +93,26 @@ async function initDB() {
   // Migrate existing call_history table if needed
   await ensureColumn(conn, dbName, 'call_history', 'model_id', "VARCHAR(200) DEFAULT NULL COMMENT '被测模型ID' AFTER site_name");
   await conn.query(
-    `ALTER TABLE call_history MODIFY COLUMN action_type ENUM('test','fetch_models','batch_test','model_test') NOT NULL COMMENT '操作类型'`
+    `ALTER TABLE call_history MODIFY COLUMN action_type ENUM('test','fetch_models','batch_test','model_test','fetch_groups') NOT NULL COMMENT '操作类型'`
   );
+
+  // Pricing groups (计费分组及倍率) fetched from the upstream new-api/one-api site
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS site_price_groups (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      site_id INT NOT NULL,
+      group_name VARCHAR(100) NOT NULL COLLATE utf8mb4_bin COMMENT '分组名(区分大小写和空格)',
+      ratio DOUBLE DEFAULT NULL COMMENT '分组倍率',
+      svip_ratio DOUBLE DEFAULT NULL COMMENT '会员倍率(部分站点提供)',
+      prev_ratio DOUBLE DEFAULT NULL COMMENT '最近一次变动前的倍率',
+      ratio_changed_at DATETIME DEFAULT NULL COMMENT '倍率最近一次变动时间',
+      description VARCHAR(500) DEFAULT NULL COMMENT '分组说明',
+      model_count INT DEFAULT NULL COMMENT '分组可用模型数',
+      fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '拉取时间',
+      UNIQUE KEY uq_site_group (site_id, group_name),
+      FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
 
   // ---- Authentication ----
   // All auth timestamps are BIGINT epoch milliseconds: no timezone ambiguity.

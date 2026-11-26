@@ -42,6 +42,7 @@ const actionConfig: Record<string, { label: string; color: string; bg: string }>
   fetch_models: { label: '获取模型', color: '#0284c7', bg: 'rgba(56,189,248,0.12)' },
   batch_test: { label: '批量测试', color: '#7c3aed', bg: 'rgba(167,139,250,0.12)' },
   model_test: { label: '模型测试', color: '#059669', bg: 'rgba(16,185,129,0.12)' },
+  fetch_groups: { label: '获取分组', color: '#b45309', bg: 'rgba(245,158,11,0.12)' },
 };
 
 const statusConfig: Record<string, { label: string; color: string; Icon: typeof CheckCircle2 }> = {
@@ -276,6 +277,7 @@ export default function HistoryPage() {
               { key: 'test', label: '连通测试' },
               { key: 'model_test', label: '模型测试' },
               { key: 'fetch_models', label: '获取模型' },
+              { key: 'fetch_groups', label: '获取分组' },
               { key: 'batch_test', label: '批量测试' },
             ].map((opt) => {
               const active = actionFilter === opt.key;

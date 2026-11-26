@@ -29,6 +29,7 @@ import CountUp from '@/components/reactbits/CountUp';
 import Magnet from '@/components/reactbits/Magnet';
 import SpotlightCard from '@/components/reactbits/SpotlightCard';
 import { useToast } from '@/components/ToastProvider';
+import PriceGroupsPanel from '@/components/PriceGroupsPanel';
 
 gsap.registerPlugin(useGSAP);
 
@@ -547,6 +548,9 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
           )}
         </div>
       </SpotlightCard>
+
+      {/* Pricing Groups Section */}
+      <PriceGroupsPanel siteId={id} />
 
       {/* Models Section */}
       <div>
