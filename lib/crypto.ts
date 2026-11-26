@@ -48,6 +48,13 @@ export function decrypt(cipherText: string): string {
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
 }
 
+/** Masked key for display, or null when the site has no API Key configured. */
+export function maskStoredKey(cipherText: string | null | undefined): string | null {
+  return cipherText ? maskKey(decrypt(cipherText)) : null;
+}
+
+export const NO_API_KEY_ERROR = '该站点未配置 API Key，无法执行此操作（编辑站点可补填）';
+
 export function maskKey(key: string): string {
   if (key.length <= 8) return '****';
   return key.slice(0, 6) + '****' + key.slice(-4);

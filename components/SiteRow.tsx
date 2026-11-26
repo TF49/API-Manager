@@ -14,7 +14,7 @@ export interface Site {
   id: number;
   name: string;
   base_url: string;
-  api_key_masked: string;
+  api_key_masked: string | null;
   group_tag: string | null;
   notes: string | null;
   status: SiteStatus;
@@ -41,6 +41,8 @@ export default function SiteRow({ site, isLast, onEdit, onDeleteRequest, onRefre
   const noticeRef = useRef<HTMLDivElement>(null);
   const [modelNotice, setModelNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const hasKey = !!site.api_key_masked;
+  const noKeyTitle = '未配置 API Key，编辑站点可补填';
   const displayStatus = testedStatus && testedStatus.forProp === site.status ? testedStatus.value : site.status;
 
   useGSAP(
@@ -68,6 +70,8 @@ export default function SiteRow({ site, isLast, onEdit, onDeleteRequest, onRefre
         } else {
           toast(`${site.name} 连通测试失败`, 'error');
         }
+      } else if (json.error) {
+        toast(`${site.name}：${json.error}`, 'error');
       }
       onRefresh();
     } finally {
@@ -95,6 +99,7 @@ export default function SiteRow({ site, isLast, onEdit, onDeleteRequest, onRefre
   }
 
   async function handleCopy() {
+    if (!site.api_key_masked) return;
     navigator.clipboard.writeText(site.api_key_masked);
     setCopied(true);
     toast('已复制掩码 API Key', 'info');
@@ -191,18 +196,20 @@ export default function SiteRow({ site, isLast, onEdit, onDeleteRequest, onRefre
               minWidth: 0,
             }}
           >
-            {site.api_key_masked}
+            {site.api_key_masked ?? '未配置'}
           </code>
-          <button
-            onClick={handleCopy}
-            title={copied ? '已复制' : '复制掩码 Key'}
-            aria-label="复制掩码 API Key"
-            className="row-icon-btn"
-            data-active={copied ? 'true' : undefined}
-            style={{ width: 24, height: 24 }}
-          >
-            {copied ? <Check size={12} /> : <Copy size={12} />}
-          </button>
+          {hasKey && (
+            <button
+              onClick={handleCopy}
+              title={copied ? '已复制' : '复制掩码 Key'}
+              aria-label="复制掩码 API Key"
+              className="row-icon-btn"
+              data-active={copied ? 'true' : undefined}
+              style={{ width: 24, height: 24 }}
+            >
+              {copied ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          )}
         </div>
 
         {/* Status */}
@@ -217,11 +224,16 @@ export default function SiteRow({ site, isLast, onEdit, onDeleteRequest, onRefre
 
         {/* Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
-          <button onClick={handleTest} disabled={testing} className="row-text-btn" title="连通测试">
+          <button onClick={handleTest} disabled={testing || !hasKey} className="row-text-btn" title={hasKey ? '连通测试' : noKeyTitle}>
             {testing ? <Loader2 size={12} className="animate-spin" /> : <Activity size={12} />}
             {testing ? '测试中' : '测试'}
           </button>
-          <button onClick={handleFetchModels} disabled={fetchingModels} className="row-text-btn" title="拉取模型列表">
+          <button
+            onClick={handleFetchModels}
+            disabled={fetchingModels || !hasKey}
+            className="row-text-btn"
+            title={hasKey ? '拉取模型列表' : noKeyTitle}
+          >
             {fetchingModels ? <Loader2 size={12} className="animate-spin" /> : <Cpu size={12} />}
             {fetchingModels ? '获取中' : '模型'}
           </button>

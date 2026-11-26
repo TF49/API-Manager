@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { encrypt, maskKey, decrypt } from '@/lib/crypto';
+import { encrypt, maskStoredKey } from '@/lib/crypto';
 import { withAuth } from '@/lib/auth/guard';
 import { assertSafeUpstreamUrl, UnsafeUrlError } from '@/lib/net/safe-fetch';
 
@@ -21,7 +21,7 @@ async function handleGET(req: NextRequest) {
     const [rows] = await pool.query(sql, params) as any[];
     const sites = rows.map((r: any) => ({
       ...r,
-      api_key_masked: maskKey(decrypt(r.api_key_encrypted)),
+      api_key_masked: maskStoredKey(r.api_key_encrypted),
       api_key_encrypted: undefined,
     }));
 
@@ -37,8 +37,8 @@ async function handlePOST(req: NextRequest) {
     const body = await req.json();
     const { name, base_url, api_key, group_tag, notes } = body;
 
-    if (!name || !base_url || !api_key) {
-      return NextResponse.json({ success: false, error: '名称、Base URL 和 API Key 为必填项' }, { status: 400 });
+    if (!name || !base_url) {
+      return NextResponse.json({ success: false, error: '名称和 Base URL 为必填项' }, { status: 400 });
     }
 
     // Normalize base_url
@@ -51,7 +51,9 @@ async function handlePOST(req: NextRequest) {
       }
       throw e;
     }
-    const encryptedKey = encrypt(api_key);
+    // API Key is optional — only connectivity / model tests need it
+    const trimmedKey = typeof api_key === 'string' ? api_key.trim() : '';
+    const encryptedKey = trimmedKey ? encrypt(trimmedKey) : null;
 
     const [result] = await pool.query(
       'INSERT INTO sites (name, base_url, api_key_encrypted, group_tag, notes) VALUES (?, ?, ?, ?, ?)',

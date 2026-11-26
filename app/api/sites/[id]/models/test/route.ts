@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2/promise';
 import pool from '@/lib/db';
-import { decrypt } from '@/lib/crypto';
+import { decrypt, NO_API_KEY_ERROR } from '@/lib/crypto';
 import { testModelAvailability } from '@/lib/model-test';
 import { withAuth } from '@/lib/auth/guard';
 
@@ -9,7 +9,7 @@ interface SiteRow extends RowDataPacket {
   id: number;
   name: string;
   base_url: string;
-  api_key_encrypted: string;
+  api_key_encrypted: string | null;
 }
 
 // POST /api/sites/[id]/models/test - 针对单个指定模型进行实际调用测试
@@ -30,6 +30,9 @@ async function handlePOST(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const site = sites[0];
+    if (!site.api_key_encrypted) {
+      return NextResponse.json({ success: false, error: NO_API_KEY_ERROR }, { status: 400 });
+    }
     const apiKey = decrypt(site.api_key_encrypted);
 
     const outcome = await testModelAvailability({

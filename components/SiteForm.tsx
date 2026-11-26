@@ -11,6 +11,7 @@ interface Props {
     base_url?: string;
     group_tag?: string | null;
     notes?: string | null;
+    api_key_masked?: string | null;
   };
   groups: string[];
   onSuccess: () => void;
@@ -92,6 +93,7 @@ function FormInput({
 
 export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: Props) {
   const isEdit = !!initial.id;
+  const hasStoredKey = isEdit && !!initial.api_key_masked;
   const [form, setForm] = useState({
     name: initial.name || '',
     base_url: initial.base_url || '',
@@ -99,6 +101,7 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
     group_tag: initial.group_tag || '',
     notes: initial.notes || '',
   });
+  const [clearKey, setClearKey] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -112,10 +115,6 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
       setError('名称和 Base URL 为必填项');
       return;
     }
-    if (!isEdit && !form.api_key.trim()) {
-      setError('API Key 为必填项');
-      return;
-    }
     setLoading(true);
     try {
       const url = isEdit ? `/api/sites/${initial.id}` : '/api/sites';
@@ -123,7 +122,7 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, clear_api_key: clearKey && !form.api_key.trim() }),
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
@@ -154,34 +153,59 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
         style={{ fontFamily: 'var(--font-geist-mono), monospace' }}
       />
 
-      <FormInput
-        label="API Key"
-        required={!isEdit}
-        hint={isEdit ? '（留空则不修改）' : undefined}
-        type={showKey ? 'text' : 'password'}
-        placeholder={isEdit ? '留空则不修改' : 'sk-...'}
-        value={form.api_key}
-        onChange={(e) => set('api_key', e.target.value)}
-        style={{ fontFamily: 'var(--font-geist-mono), monospace' }}
-        rightSlot={
-          <button
-            type="button"
-            onClick={() => setShowKey((v) => !v)}
-            aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
+      <div>
+        <FormInput
+          label="API Key"
+          hint={hasStoredKey ? '（可选，留空则不修改）' : '（可选，仅连通测试 / 模型拉取需要）'}
+          type={showKey ? 'text' : 'password'}
+          placeholder={hasStoredKey ? `当前：${initial.api_key_masked}` : '不填也可获取分组和倍率'}
+          value={form.api_key}
+          disabled={clearKey}
+          onChange={(e) => set('api_key', e.target.value)}
+          style={{ fontFamily: 'var(--font-geist-mono), monospace', opacity: clearKey ? 0.5 : 1 }}
+          rightSlot={
+            <button
+              type="button"
+              onClick={() => setShowKey((v) => !v)}
+              aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--muted)',
+                cursor: 'pointer',
+                display: 'flex',
+                padding: 4,
+                borderRadius: 6,
+              }}
+            >
+              {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          }
+        />
+        {hasStoredKey && (
+          <label
             style={{
-              background: 'transparent',
-              border: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              marginTop: 8,
+              fontSize: 12,
               color: 'var(--muted)',
               cursor: 'pointer',
-              display: 'flex',
-              padding: 4,
-              borderRadius: 6,
             }}
           >
-            {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
-          </button>
-        }
-      />
+            <input
+              type="checkbox"
+              checked={clearKey}
+              onChange={(e) => {
+                setClearKey(e.target.checked);
+                if (e.target.checked) set('api_key', '');
+              }}
+            />
+            清除已保存的 API Key
+          </label>
+        )}
+      </div>
 
       <div>
         <label

@@ -13,6 +13,10 @@ async function handlePOST() {
     const results = await Promise.allSettled(
       sites.map(async (site: any) => {
         const start = Date.now();
+        // Sites without an API Key can't be probed; skip without touching their status
+        if (!site.api_key_encrypted) {
+          return { id: site.id, name: site.name, status: 'skipped', error: '未配置 API Key' };
+        }
         try {
           const apiKey = decrypt(site.api_key_encrypted);
           const baseUrl = site.base_url.replace(/\/$/, '');

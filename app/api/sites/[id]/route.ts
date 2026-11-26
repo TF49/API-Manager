@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { encrypt, decrypt, maskKey } from '@/lib/crypto';
+import { encrypt, maskStoredKey } from '@/lib/crypto';
 import { withAuth } from '@/lib/auth/guard';
 import { assertSafeUpstreamUrl, UnsafeUrlError } from '@/lib/net/safe-fetch';
 
@@ -13,7 +13,7 @@ async function handleGET(_req: NextRequest, { params }: { params: Promise<{ id: 
     const site = rows[0];
     return NextResponse.json({
       success: true,
-      data: { ...site, api_key_masked: maskKey(decrypt(site.api_key_encrypted)), api_key_encrypted: undefined }
+      data: { ...site, api_key_masked: maskStoredKey(site.api_key_encrypted), api_key_encrypted: undefined }
     });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
@@ -25,7 +25,7 @@ async function handlePUT(req: NextRequest, { params }: { params: Promise<{ id: s
   try {
     const { id } = await params;
     const body = await req.json();
-    const { name, base_url, api_key, group_tag, notes } = body;
+    const { name, base_url, api_key, clear_api_key, group_tag, notes } = body;
 
     if (!name || !base_url) {
       return NextResponse.json({ success: false, error: '名称和 Base URL 为必填项' }, { status: 400 });
@@ -41,11 +41,12 @@ async function handlePUT(req: NextRequest, { params }: { params: Promise<{ id: s
       throw e;
     }
 
-    // If api_key provided, re-encrypt; otherwise keep existing
-    if (api_key) {
+    // api_key provided → re-encrypt; clear_api_key → remove; otherwise keep existing
+    const trimmedKey = typeof api_key === 'string' ? api_key.trim() : '';
+    if (trimmedKey || clear_api_key === true) {
       await pool.query(
         'UPDATE sites SET name=?, base_url=?, api_key_encrypted=?, group_tag=?, notes=? WHERE id=?',
-        [name, normalizedUrl, encrypt(api_key), group_tag || null, notes || null, id]
+        [name, normalizedUrl, trimmedKey ? encrypt(trimmedKey) : null, group_tag || null, notes || null, id]
       );
     } else {
       await pool.query(

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2/promise';
 import pool from '@/lib/db';
-import { decrypt } from '@/lib/crypto';
+import { decrypt, NO_API_KEY_ERROR } from '@/lib/crypto';
 import { withAuth } from '@/lib/auth/guard';
 import { safeFetch } from '@/lib/net/safe-fetch';
 
@@ -9,7 +9,7 @@ interface SiteRow extends RowDataPacket {
   id: number;
   name: string;
   base_url: string;
-  api_key_encrypted: string;
+  api_key_encrypted: string | null;
 }
 
 interface UpstreamModelItem {
@@ -46,6 +46,9 @@ async function handlePOST(_req: NextRequest, { params }: { params: Promise<{ id:
     const [sites] = await pool.query<SiteRow[]>('SELECT * FROM sites WHERE id = ?', [id]);
     if (!sites.length) return NextResponse.json({ success: false, error: '站点不存在' }, { status: 404 });
     const site = sites[0];
+    if (!site.api_key_encrypted) {
+      return NextResponse.json({ success: false, error: NO_API_KEY_ERROR }, { status: 400 });
+    }
     const apiKey = decrypt(site.api_key_encrypted);
     const cleanBase = site.base_url.trim().replace(/\/+$/, '');
     const v1Base = cleanBase.endsWith('/v1') ? cleanBase : `${cleanBase}/v1`;

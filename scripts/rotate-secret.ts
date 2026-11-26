@@ -33,7 +33,9 @@ async function main() {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [rows] = await conn.query<Row[]>('SELECT id, name, api_key_encrypted FROM sites FOR UPDATE');
+    const [rows] = await conn.query<Row[]>(
+      'SELECT id, name, api_key_encrypted FROM sites WHERE api_key_encrypted IS NOT NULL FOR UPDATE'
+    );
 
     const updates: Array<[string, number]> = [];
     for (const r of rows) {

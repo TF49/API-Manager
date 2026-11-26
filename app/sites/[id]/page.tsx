@@ -49,7 +49,7 @@ interface Site {
   id: number;
   name: string;
   base_url: string;
-  api_key_masked: string;
+  api_key_masked: string | null;
   group_tag: string | null;
   status: SiteStatus;
   notes: string | null;
@@ -126,7 +126,11 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
     try {
       const res = await fetch(`/api/sites/${id}/test`, { method: 'POST' });
       const json = await res.json();
-      const result: TestResult = json.data || json;
+      if (!json.data) {
+        toast(json.error || '连通测试失败', 'error');
+        return;
+      }
+      const result: TestResult = json.data;
       setTestResult(result);
       fetchSite();
       if (result.status === 'ok') {
@@ -174,6 +178,7 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
         }
         return result.status as SiteStatus;
       }
+      if (!silent && json.error) toast(`${modelId}：${json.error}`, 'error');
       return 'error';
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') throw err;
@@ -332,6 +337,8 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
   }
 
   const hasActiveFilter = Boolean(search || selectedProvider || statusFilter);
+  const hasKey = !!site.api_key_masked;
+  const noKeyTitle = '未配置 API Key，编辑站点可补填';
 
   return (
     <div>
@@ -417,7 +424,7 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
                     API Key
                   </span>
                   <code style={{ fontSize: 13, fontFamily: 'var(--font-geist-mono), monospace', color: '#64748b' }}>
-                    {site.api_key_masked}
+                    {site.api_key_masked ?? '未配置（仅获取分组倍率时无需填写）'}
                   </code>
                 </div>
                 {site.notes && (
@@ -446,7 +453,8 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
             <div style={{ display: 'flex', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
               <button
                 onClick={handleTest}
-                disabled={testing}
+                disabled={testing || !hasKey}
+                title={hasKey ? undefined : noKeyTitle}
                 style={{
                   padding: '9px 16px',
                   fontSize: 13,
@@ -454,9 +462,9 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
                   borderRadius: 9,
                   background: 'var(--surface-alt)',
                   border: '1px solid var(--border)',
-                  color: testing ? 'var(--muted)' : 'var(--foreground)',
-                  cursor: testing ? 'not-allowed' : 'pointer',
-                  opacity: testing ? 0.7 : 1,
+                  color: testing || !hasKey ? 'var(--muted)' : 'var(--foreground)',
+                  cursor: testing || !hasKey ? 'not-allowed' : 'pointer',
+                  opacity: testing || !hasKey ? 0.6 : 1,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
@@ -469,7 +477,8 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
               <Magnet magnetStrength={0.18}>
                 <button
                   onClick={refreshModels}
-                  disabled={fetchingModels}
+                  disabled={fetchingModels || !hasKey}
+                  title={hasKey ? undefined : noKeyTitle}
                   style={{
                     padding: '9px 18px',
                     fontSize: 13,
@@ -478,8 +487,8 @@ function SiteDetailContent({ params }: { params: Promise<{ id: string }> }) {
                     background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
                     border: '1px solid rgba(129,140,248,0.4)',
                     color: 'white',
-                    cursor: fetchingModels ? 'not-allowed' : 'pointer',
-                    opacity: fetchingModels ? 0.75 : 1,
+                    cursor: fetchingModels || !hasKey ? 'not-allowed' : 'pointer',
+                    opacity: fetchingModels || !hasKey ? 0.55 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,

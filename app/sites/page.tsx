@@ -30,7 +30,7 @@ interface Site {
   id: number;
   name: string;
   base_url: string;
-  api_key_masked: string;
+  api_key_masked: string | null;
   group_tag: string | null;
   notes: string | null;
   status: 'unknown' | 'ok' | 'error' | 'quota' | 'timeout';
@@ -191,8 +191,14 @@ export default function SitesPage() {
           map[r.id] = r;
         });
         setBatchResults(map);
-        const okNum = (json.data as BatchResult[]).filter((r) => r.status === 'ok').length;
-        toast(`批量测试完成：${okNum} / ${json.data.length} 个站点正常`, 'info');
+        const results = json.data as BatchResult[];
+        const okNum = results.filter((r) => r.status === 'ok').length;
+        const skipped = results.filter((r) => r.status === 'skipped').length;
+        const tested = results.length - skipped;
+        toast(
+          `批量测试完成：${okNum} / ${tested} 个站点正常${skipped ? `，${skipped} 个未配置 Key 已跳过` : ''}`,
+          'info'
+        );
       }
       fetchSites();
     } finally {
@@ -760,10 +766,23 @@ export default function SitesPage() {
                     style={{
                       fontSize: 12,
                       fontWeight: 600,
-                      color: r.status === 'ok' ? '#059669' : r.status === 'quota' ? '#d97706' : '#dc2626',
+                      color:
+                        r.status === 'ok'
+                          ? '#059669'
+                          : r.status === 'quota'
+                            ? '#d97706'
+                            : r.status === 'skipped'
+                              ? 'var(--muted)'
+                              : '#dc2626',
                     }}
                   >
-                    {r.status === 'ok' ? '正常' : r.status === 'quota' ? '超额' : '失败'}
+                    {r.status === 'ok'
+                      ? '正常'
+                      : r.status === 'quota'
+                        ? '超额'
+                        : r.status === 'skipped'
+                          ? '未配置 Key'
+                          : '失败'}
                   </span>
                 </div>
               </div>

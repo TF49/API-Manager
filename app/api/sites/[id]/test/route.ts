@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { decrypt } from '@/lib/crypto';
+import { decrypt, NO_API_KEY_ERROR } from '@/lib/crypto';
 import { withAuth } from '@/lib/auth/guard';
 import { safeFetch } from '@/lib/net/safe-fetch';
 
@@ -13,6 +13,9 @@ async function handlePOST(_req: NextRequest, { params }: { params: Promise<{ id:
     const [sites] = await pool.query('SELECT * FROM sites WHERE id = ?', [id]) as any[];
     if (!sites.length) return NextResponse.json({ success: false, error: '站点不存在' }, { status: 404 });
     const site = sites[0];
+    if (!site.api_key_encrypted) {
+      return NextResponse.json({ success: false, error: NO_API_KEY_ERROR }, { status: 400 });
+    }
     const apiKey = decrypt(site.api_key_encrypted);
     const baseUrl = site.base_url.replace(/\/$/, '');
 
