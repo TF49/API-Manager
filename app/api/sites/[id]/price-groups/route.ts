@@ -2,123 +2,103 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { RowDataPacket } from 'mysql2/promise';
 import pool from '@/lib/db';
 import { withAuth } from '@/lib/auth/guard';
-import { UnsafeUrlError } from '@/lib/net/safe-fetch';
-import { fetchPriceGroups, PriceGroupsAuthError } from '@/lib/price-groups';
-import { schemaErrorMessage, siteCredentials } from '@/lib/site-login';
-
-interface SiteRow extends RowDataPacket {
-  id: number;
-  name: string;
-  base_url: string;
-  login_email: string | null;
-  login_password_encrypted: string | null;
-}
+import { parseCategoryList, isCategory } from '@/lib/model-category';
+import { syncSite } from '@/lib/price-sync';
+import { schemaErrorMessage } from '@/lib/site-login';
 
 function dbErrorMessage(err: unknown, fallback: string): string {
   return schemaErrorMessage(err) ?? (err instanceof Error ? err.message : fallback);
 }
 
-// GET /api/sites/[id]/price-groups - 已保存的分组倍率
+// GET /api/sites/[id]/price-groups - 已保存的分组倍率，附带每个分组的模型和类别
 async function handleGET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT group_name, ratio, svip_ratio, prev_ratio, ratio_changed_at, description, model_count, fetched_at
+    const [groups] = await pool.query<RowDataPacket[]>(
+      `SELECT group_name, ratio, svip_ratio, prev_ratio, ratio_changed_at, description, model_count,
+              platform, categories, category_override, fetched_at
        FROM site_price_groups
        WHERE site_id = ?
        ORDER BY ratio IS NULL, ratio ASC, group_name ASC`,
       [id]
     );
-    return NextResponse.json({ success: true, data: rows });
+    const [models] = await pool.query<RowDataPacket[]>(
+      `SELECT group_name, model_name, category, billing, input_price, output_price, request_price
+       FROM site_group_models WHERE site_id = ? ORDER BY model_name`,
+      [id]
+    );
+    const byGroup = new Map<string, RowDataPacket[]>();
+    for (const m of models) {
+      let list = byGroup.get(m.group_name);
+      if (!list) byGroup.set(m.group_name, (list = []));
+      list.push(m);
+    }
+
+    const data = groups.map((g) => ({
+      ...g,
+      categories: parseCategoryList(g.category_override) ?? parseCategoryList(g.categories) ?? [],
+      auto_categories: parseCategoryList(g.categories) ?? [],
+      category_overridden: !!parseCategoryList(g.category_override),
+      models: (byGroup.get(g.group_name) ?? []).map((m) => ({
+        name: m.model_name,
+        category: m.category,
+        billing: m.billing,
+        input: m.input_price,
+        output: m.output_price,
+        request: m.request_price,
+      })),
+    }));
+    return NextResponse.json({ success: true, data });
   } catch (err: unknown) {
     return NextResponse.json({ success: false, error: dbErrorMessage(err, '获取分组失败') }, { status: 500 });
   }
 }
 
+const SYNC_STATUS = { unsafe_url: 400, auth: 422, upstream: 502, not_found: 404, internal: 500 } as const;
+
 // POST /api/sites/[id]/price-groups - 从站点重新拉取分组倍率并同步
 async function handlePOST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const start = Date.now();
-  let siteName = '';
-
+  const siteId = Number(id);
+  if (!Number.isInteger(siteId) || siteId <= 0) {
+    return NextResponse.json({ success: false, error: '站点 ID 无效' }, { status: 400 });
+  }
   try {
-    const [sites] = await pool.query<SiteRow[]>('SELECT id, name, base_url, login_email, login_password_encrypted FROM sites WHERE id = ?', [id]);
-    if (!sites.length) return NextResponse.json({ success: false, error: '站点不存在' }, { status: 404 });
-    const site = sites[0];
-    siteName = site.name;
-
-    let result;
-    try {
-      result = await fetchPriceGroups(site.base_url, { sub2api: siteCredentials(site) });
-    } catch (err: unknown) {
-      const latency = Date.now() - start;
-      const msg = err instanceof Error ? err.message : '获取分组失败';
-      await logHistory(id, siteName, 'error', latency, msg.slice(0, 1000));
-      const status = err instanceof UnsafeUrlError ? 400 : err instanceof PriceGroupsAuthError ? 422 : 502;
-      return NextResponse.json({ success: false, error: msg }, { status });
-    }
-
-    const latency = Date.now() - start;
-    const names = result.groups.map((g) => g.name);
-
-    const conn = await pool.getConnection();
-    try {
-      await conn.beginTransaction();
-      await conn.query('DELETE FROM site_price_groups WHERE site_id = ? AND group_name NOT IN (?)', [id, names]);
-      for (const g of result.groups) {
-        // 赋值按顺序执行：先根据旧 ratio 记录变动，再写入新 ratio
-        await conn.query(
-          `INSERT INTO site_price_groups (site_id, group_name, ratio, svip_ratio, description, model_count, fetched_at)
-           VALUES (?, ?, ?, ?, ?, ?, NOW())
-           ON DUPLICATE KEY UPDATE
-             ratio_changed_at = IF(ratio <=> VALUES(ratio), ratio_changed_at, NOW()),
-             prev_ratio = IF(ratio <=> VALUES(ratio), prev_ratio, ratio),
-             ratio = VALUES(ratio),
-             svip_ratio = VALUES(svip_ratio),
-             description = VALUES(description),
-             model_count = VALUES(model_count),
-             fetched_at = NOW()`,
-          [id, g.name, g.ratio, g.svip_ratio, g.description, g.model_count]
-        );
-      }
-      await conn.commit();
-    } catch (err) {
-      await conn.rollback();
-      throw err;
-    } finally {
-      conn.release();
-    }
-
-    await logHistory(id, siteName, 'ok', latency, null);
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        count: result.groups.length,
-        latency_ms: latency,
-        origin: result.origin,
-        architecture: result.architecture,
-        sources: result.sources,
-      },
-    });
+    const r = await syncSite(siteId);
+    if (!r.ok) return NextResponse.json({ success: false, error: r.error }, { status: SYNC_STATUS[r.kind] });
+    return NextResponse.json({ success: true, data: r });
   } catch (err: unknown) {
-    const msg = dbErrorMessage(err, '获取分组失败');
-    await logHistory(id, siteName, 'error', Date.now() - start, msg);
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return NextResponse.json({ success: false, error: dbErrorMessage(err, '获取分组失败') }, { status: 500 });
   }
 }
 
-async function logHistory(siteId: string, siteName: string, status: string, latency: number, errorMsg: string | null) {
+// PATCH /api/sites/[id]/price-groups - 手动设置分组类别 { group_name, categories: string[] | null }
+async function handlePATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await pool.query(
-      `INSERT INTO call_history (site_id, site_name, action_type, status, status_code, latency_ms, error_msg)
-       VALUES (?, ?, 'fetch_groups', ?, NULL, ?, ?)`,
-      [siteId, siteName, status, latency, errorMsg]
+    const { id } = await params;
+    const body = await req.json().catch(() => null);
+    const groupName = body && typeof body.group_name === 'string' ? body.group_name : '';
+    if (!groupName || groupName.length > 100) {
+      return NextResponse.json({ success: false, error: '缺少分组名' }, { status: 400 });
+    }
+    let override: string | null = null;
+    if (Array.isArray(body.categories) && body.categories.length) {
+      if (!body.categories.every(isCategory)) {
+        return NextResponse.json({ success: false, error: '类别无效' }, { status: 400 });
+      }
+      override = parseCategoryList(body.categories.join(','))!.join(',');
+    }
+    const [result] = await pool.query<import('mysql2').ResultSetHeader>(
+      'UPDATE site_price_groups SET category_override = ? WHERE site_id = ? AND group_name = ?',
+      [override, id, groupName]
     );
-  } catch {
-    /* ignore logging errors */
+    if (!result.affectedRows) return NextResponse.json({ success: false, error: '分组不存在' }, { status: 404 });
+    return NextResponse.json({ success: true });
+  } catch (err: unknown) {
+    return NextResponse.json({ success: false, error: dbErrorMessage(err, '保存失败') }, { status: 500 });
   }
 }
 
 export const GET = withAuth(handleGET);
 export const POST = withAuth(handlePOST);
+export const PATCH = withAuth(handlePATCH);

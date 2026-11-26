@@ -4,6 +4,6 @@ import { useEffect } from 'react';
 
 export default function Home() {
   const router = useRouter();
-  useEffect(() => { router.replace('/sites'); }, [router]);
+  useEffect(() => { router.replace('/compare'); }, [router]);
   return null;
 }

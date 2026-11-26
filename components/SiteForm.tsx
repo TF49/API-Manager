@@ -11,7 +11,6 @@ interface Props {
     base_url?: string;
     group_tag?: string | null;
     notes?: string | null;
-    api_key_masked?: string | null;
     login_email?: string | null;
     has_login_password?: boolean;
   };
@@ -95,19 +94,15 @@ function FormInput({
 
 export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: Props) {
   const isEdit = !!initial.id;
-  const hasStoredKey = isEdit && !!initial.api_key_masked;
   const hasStoredLogin = isEdit && !!initial.login_email && !!initial.has_login_password;
   const [form, setForm] = useState({
     name: initial.name || '',
     base_url: initial.base_url || '',
-    api_key: '',
     group_tag: initial.group_tag || '',
     notes: initial.notes || '',
     login_email: initial.login_email || '',
     login_password: '',
   });
-  const [clearKey, setClearKey] = useState(false);
-  const [showKey, setShowKey] = useState(false);
   const [showLogin, setShowLogin] = useState(hasStoredLogin);
   const [clearLogin, setClearLogin] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -132,7 +127,6 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
-          clear_api_key: clearKey && !form.api_key.trim(),
           clear_login: clearLogin,
         }),
       });
@@ -151,7 +145,7 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
       <FormInput
         label="站点名称"
         required
-        placeholder="例：OpenRouter / 硅基流动"
+        placeholder="例：某某中转站"
         value={form.name}
         onChange={(e) => set('name', e.target.value)}
       />
@@ -159,65 +153,11 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
       <FormInput
         label="Base URL"
         required
-        placeholder="https://openrouter.ai/api"
+        placeholder="https://api.example.com"
         value={form.base_url}
         onChange={(e) => set('base_url', e.target.value)}
         style={{ fontFamily: 'var(--font-geist-mono), monospace' }}
       />
-
-      <div>
-        <FormInput
-          label="API Key"
-          hint={hasStoredKey ? '（可选，留空则不修改）' : '（可选，仅连通测试 / 模型拉取需要）'}
-          type={showKey ? 'text' : 'password'}
-          placeholder={hasStoredKey ? `当前：${initial.api_key_masked}` : '不填也可获取分组和倍率'}
-          value={form.api_key}
-          disabled={clearKey}
-          onChange={(e) => set('api_key', e.target.value)}
-          style={{ fontFamily: 'var(--font-geist-mono), monospace', opacity: clearKey ? 0.5 : 1 }}
-          rightSlot={
-            <button
-              type="button"
-              onClick={() => setShowKey((v) => !v)}
-              aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--muted)',
-                cursor: 'pointer',
-                display: 'flex',
-                padding: 4,
-                borderRadius: 6,
-              }}
-            >
-              {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
-            </button>
-          }
-        />
-        {hasStoredKey && (
-          <label
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              marginTop: 8,
-              fontSize: 12,
-              color: 'var(--muted)',
-              cursor: 'pointer',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={clearKey}
-              onChange={(e) => {
-                setClearKey(e.target.checked);
-                if (e.target.checked) set('api_key', '');
-              }}
-            />
-            清除已保存的 API Key
-          </label>
-        )}
-      </div>
 
       <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: showLogin ? '10px 12px 12px' : '0 12px' }}>
         <button

@@ -219,7 +219,7 @@ server {
         proxy_set_header Host \$http_host;            # keep :port so app redirects stay on it
         proxy_set_header X-Real-IP \$remote_addr;   # overwrite: clients can't spoof it
         proxy_set_header X-Forwarded-Proto https;
-        proxy_read_timeout 120s;                     # batch model tests can take a while
+        proxy_read_timeout 120s;                     # single-site group fetch can take up to ~75s
     }
 }
 NGINX

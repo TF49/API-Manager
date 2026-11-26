@@ -5,8 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import { KeyRound, Loader2, LockKeyhole, User } from 'lucide-react';
 
 function safeNext(next: string | null): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return '/sites';
-  if (next.startsWith('/login') || next.startsWith('/api/')) return '/sites';
+  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return '/compare';
+  if (next.startsWith('/login') || next.startsWith('/api/')) return '/compare';
   return next;
 }
 

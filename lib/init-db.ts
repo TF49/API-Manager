@@ -123,6 +123,68 @@ async function initDB() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  // ---- Price comparison ----
+
+  await ensureColumn(conn, dbName, 'site_price_groups', 'categories', "VARCHAR(100) DEFAULT NULL COMMENT '按模型自动判断的分组类别(逗号分隔)'");
+  await ensureColumn(conn, dbName, 'site_price_groups', 'category_override', "VARCHAR(100) DEFAULT NULL COMMENT '手动指定的分组类别(逗号分隔),为空时用自动判断'");
+  await ensureColumn(conn, dbName, 'site_price_groups', 'platform', "VARCHAR(30) DEFAULT NULL COMMENT 'sub2api 分组平台'");
+
+  await ensureColumn(conn, dbName, 'sites', 'architecture', "VARCHAR(20) DEFAULT NULL COMMENT '站点架构 new-api / sub2api'");
+  await ensureColumn(conn, dbName, 'sites', 'last_fetched_at', "DATETIME DEFAULT NULL COMMENT '最后一次获取分组的时间'");
+  await ensureColumn(conn, dbName, 'sites', 'last_fetch_ok', "TINYINT(1) DEFAULT NULL COMMENT '最后一次获取是否成功'");
+  await ensureColumn(conn, dbName, 'sites', 'last_fetch_error', "TEXT DEFAULT NULL COMMENT '最后一次获取失败的原因'");
+
+  // Models available in each group, with base prices (before the group ratio)
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS site_group_models (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      site_id INT NOT NULL,
+      group_name VARCHAR(100) NOT NULL COLLATE utf8mb4_bin,
+      model_name VARCHAR(200) NOT NULL COLLATE utf8mb4_bin,
+      category VARCHAR(20) NOT NULL COMMENT '模型类别 gpt/claude/gemini/cn/other',
+      billing ENUM('token','request') NOT NULL DEFAULT 'token' COMMENT '计费方式',
+      input_price DOUBLE DEFAULT NULL COMMENT '基础输入价 美元/百万token(未乘分组倍率)',
+      output_price DOUBLE DEFAULT NULL COMMENT '基础输出价 美元/百万token(未乘分组倍率)',
+      request_price DOUBLE DEFAULT NULL COMMENT '基础按次价 美元/次(未乘分组倍率)',
+      UNIQUE KEY uq_site_group_model (site_id, group_name, model_name),
+      KEY idx_category_model (category, model_name),
+      FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // Ratio change log: every ratio change, new group and removed group
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS price_group_changes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      site_id INT NOT NULL,
+      group_name VARCHAR(100) NOT NULL COLLATE utf8mb4_bin,
+      change_type ENUM('ratio','added','removed') NOT NULL COMMENT '倍率变动/新增分组/分组下架',
+      old_ratio DOUBLE DEFAULT NULL,
+      new_ratio DOUBLE DEFAULT NULL,
+      categories VARCHAR(100) DEFAULT NULL COMMENT '变动时分组的类别(逗号分隔)',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_created (created_at),
+      KEY idx_site (site_id, created_at),
+      FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  // Model-level changes: base price change / model added / model removed (aggregated per site + model)
+  await conn.query(
+    `ALTER TABLE price_group_changes MODIFY COLUMN change_type
+       ENUM('ratio','added','removed','model_price','model_added','model_removed') NOT NULL
+       COMMENT '分组倍率变动/新增分组/分组下架/模型基础价变动/模型上架/模型下架'`
+  );
+  await ensureColumn(conn, dbName, 'price_group_changes', 'model_name', "VARCHAR(200) DEFAULT NULL COMMENT '模型级变动的模型名' AFTER group_name");
+  await ensureColumn(conn, dbName, 'price_group_changes', 'group_count', "INT DEFAULT NULL COMMENT '模型级变动涉及的分组数(group_name 为其中一个)' AFTER model_name");
+  await ensureColumn(conn, dbName, 'price_group_changes', 'price_billing', "VARCHAR(10) DEFAULT NULL COMMENT 'token / request' AFTER new_ratio");
+  await ensureColumn(conn, dbName, 'price_group_changes', 'old_price', "DOUBLE DEFAULT NULL COMMENT '变动前基础价(输入价或按次价)' AFTER price_billing");
+  await ensureColumn(conn, dbName, 'price_group_changes', 'new_price', "DOUBLE DEFAULT NULL COMMENT '变动后基础价(输入价或按次价)' AFTER old_price");
+
+  // Last successful fetch, so "data updated at" doesn't count failures
+  await ensureColumn(conn, dbName, 'sites', 'last_success_at', "DATETIME DEFAULT NULL COMMENT '最后一次成功获取分组的时间' AFTER last_fetched_at");
+  await conn.query('UPDATE sites SET last_success_at = last_fetched_at WHERE last_success_at IS NULL AND last_fetch_ok = 1');
+
   // ---- Authentication ----
   // All auth timestamps are BIGINT epoch milliseconds: no timezone ambiguity.
 

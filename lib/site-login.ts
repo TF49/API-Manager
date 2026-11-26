@@ -1,4 +1,4 @@
-import { decrypt, maskStoredKey } from '@/lib/crypto';
+import { decrypt } from '@/lib/crypto';
 import type { Sub2apiCredentials } from '@/lib/price-groups';
 
 /**
@@ -61,10 +61,10 @@ export function resolveLoginColumns(
 
 /** 去掉加密字段后返回给前端的站点数据 */
 export function toPublicSite<T extends Record<string, unknown>>(row: T) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { api_key_encrypted, login_password_encrypted, ...rest } = row;
   return {
     ...rest,
-    api_key_masked: maskStoredKey(api_key_encrypted as string | null | undefined),
     login_email: (row.login_email as string | null | undefined) ?? null,
     has_login_password: !!login_password_encrypted,
   };

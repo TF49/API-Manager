@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { classifyGroup, classifyModel } from '@/lib/model-category';
 import { withAuth } from '@/lib/auth/guard';
 import { UnsafeUrlError } from '@/lib/net/safe-fetch';
 import { fetchPriceGroups, normalizeLookupUrl, PriceGroupsAuthError, type Sub2apiCredentials } from '@/lib/price-groups';
@@ -35,9 +36,15 @@ async function handlePOST(req: NextRequest) {
   const start = Date.now();
   try {
     const result = await fetchPriceGroups(url, { sub2api: credentials });
+    // 附上分组类别和模型类别，前端直接用 GroupTable 展示
+    const groups = result.groups.map((g) => ({
+      ...g,
+      categories: classifyGroup({ models: (g.models ?? []).map((m) => m.name), platform: g.platform, name: g.name, description: g.description }),
+      models: g.models ? g.models.map((m) => ({ ...m, category: classifyModel(m.name) })) : null,
+    }));
     return NextResponse.json({
       success: true,
-      data: { ...result, latency_ms: Date.now() - start },
+      data: { ...result, groups, latency_ms: Date.now() - start },
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '查询分组失败';

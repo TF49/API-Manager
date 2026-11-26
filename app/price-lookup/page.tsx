@@ -4,12 +4,13 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Globe, Loader2, Search, XCircle, Clock, X, KeyRound } from 'lucide-react';
 import BlurText from '@/components/reactbits/BlurText';
 import SpotlightCard from '@/components/reactbits/SpotlightCard';
-import PriceGroupList, { ratioRange, type PriceGroupView } from '@/components/PriceGroupList';
+import GroupTable, { type GroupView } from '@/components/GroupTable';
+import { formatRatio } from '@/components/price-format';
 
 interface LookupResult {
   origin: string;
   architecture: 'new-api' | 'sub2api';
-  groups: PriceGroupView[];
+  groups: GroupView[];
   sources: string[];
   latency_ms: number;
 }
@@ -107,7 +108,8 @@ export default function PriceLookupPage() {
     lookup(url);
   }
 
-  const range = result ? ratioRange(result.groups) : null;
+  const ratios = result ? result.groups.map((g) => g.ratio).filter((r): r is number => r !== null) : [];
+  const range = ratios.length ? `${formatRatio(Math.min(...ratios))} ~ ${formatRatio(Math.max(...ratios))}` : null;
 
   return (
     <div>
@@ -313,7 +315,7 @@ export default function PriceLookupPage() {
               {` · ${result.architecture} · ${result.latency_ms}ms · 来源 ${result.sources.join(' + ')}`}
             </p>
           </div>
-          <PriceGroupList key={result.origin} groups={result.groups} />
+          <GroupTable key={result.origin} groups={result.groups} />
         </div>
       )}
     </div>

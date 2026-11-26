@@ -16,14 +16,31 @@ import { safeFetch, UnsafeUrlError } from '@/lib/net/safe-fetch';
  *    读完立即调用 /api/v1/auth/logout 撤销本次登录的 refresh token。
  */
 
+/**
+ * 分组内的一个模型及其基础价（未乘分组倍率）。
+ * 价格单位：token 计费为「美元 / 百万 token」，按次计费为「美元 / 次」。
+ * 实际价格 = 基础价 × 分组倍率。
+ */
+export interface GroupModel {
+  name: string;
+  billing: 'token' | 'request';
+  input: number | null;
+  output: number | null;
+  request: number | null;
+}
+
 export interface PriceGroup {
   name: string;
   ratio: number | null;
   /** 部分魔改版 new-api 额外返回的会员倍率 */
   svip_ratio: number | null;
   description: string | null;
-  /** 该分组下可用的模型数量（来自 /api/pricing） */
+  /** 该分组下可用的模型数量；不知道时为 null */
   model_count: number | null;
+  /** 该分组下可用的模型；站点没提供模型数据时为 null */
+  models: GroupModel[] | null;
+  /** sub2api 分组所属平台（anthropic / openai / gemini ...），new-api 为 null */
+  platform: string | null;
 }
 
 export type SiteArchitecture = 'new-api' | 'sub2api';
@@ -55,11 +72,24 @@ export class PriceGroupsAuthError extends Error {
 
 const MAX_GROUPS = 500;
 const MAX_NAME_LEN = 100;
+const MAX_MODEL_NAME_LEN = 200;
+const MAX_MODELS_PER_GROUP = 2000;
 const MAX_DESC_LEN = 500;
-const MAX_BODY_BYTES = 5 * 1024 * 1024;
+const MAX_BODY_BYTES = 10 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
 
-type GroupMap = Map<string, { ratio?: number | null; svip_ratio?: number | null; description?: string | null; model_count?: number }>;
+type GroupMap = Map<string, { ratio?: number | null; svip_ratio?: number | null; description?: string | null; models?: GroupModel[] }>;
+
+/** 去掉浮点误差（如 2.5e-6 × 1e6 = 2.4999999999999996） */
+function roundPrice(v: number): number {
+  return Number(v.toPrecision(10));
+}
+
+function cleanModelName(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const name = v.trim();
+  return name && name.length <= MAX_MODEL_NAME_LEN ? name : null;
+}
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -113,20 +143,43 @@ export function parsePricingResponse(json: unknown): GroupMap {
   }
 
   if (Array.isArray(json.data)) {
-    const counts = new Map<string, number>();
-    for (const model of json.data) {
-      if (!isRecord(model) || !Array.isArray(model.enable_groups)) continue;
-      for (const g of new Set(model.enable_groups)) {
+    const byGroup = new Map<string, GroupModel[]>();
+    for (const item of json.data) {
+      if (!isRecord(item) || !Array.isArray(item.enable_groups)) continue;
+      const model = parseNewApiModel(item);
+      if (!model) continue;
+      for (const g of new Set(item.enable_groups)) {
         if (typeof g !== 'string') continue;
         const name = cleanName(g);
-        if (name) counts.set(name, (counts.get(name) || 0) + 1);
+        if (!name) continue;
+        let list = byGroup.get(name);
+        if (!list) byGroup.set(name, (list = []));
+        if (list.length < MAX_MODELS_PER_GROUP) list.push(model);
       }
     }
-    // 只给已知分组计数，避免模型里的杂项分组名凭空生成分组
-    for (const [name, e] of map) e.model_count = counts.get(name) || 0;
+    // 只给已知分组挂模型，避免模型里的杂项分组名凭空生成分组
+    for (const [name, e] of map) e.models = byGroup.get(name) ?? [];
   }
 
   return map;
+}
+
+/**
+ * new-api 的模型定价：
+ *  - quota_type 0（按量）：输入价 = model_ratio × 2 美元/百万 token，输出价 = 输入价 × completion_ratio
+ *  - quota_type 1（按次）：model_price 美元/次
+ */
+export function parseNewApiModel(item: Record<string, unknown>): GroupModel | null {
+  const name = cleanModelName(item.model_name);
+  if (!name) return null;
+  if (Number(item.quota_type) === 1) {
+    const price = toRatio(item.model_price);
+    return { name, billing: 'request', input: null, output: null, request: price === null ? null : roundPrice(price) };
+  }
+  const modelRatio = toRatio(item.model_ratio);
+  const completion = toRatio(item.completion_ratio) ?? 1;
+  const input = modelRatio === null ? null : roundPrice(modelRatio * 2);
+  return { name, billing: 'token', input, output: input === null ? null : roundPrice(input * completion), request: null };
 }
 
 /** 解析 /api/user/groups 的响应 */
@@ -155,12 +208,15 @@ export function mergePriceGroups(pricing: GroupMap, userGroups: GroupMap): Price
     const u = userGroups.get(name) || {};
     const ratio = p.ratio ?? u.ratio ?? null;
     if (ratio === null) continue; // 没有倍率的分组没有意义
+    const models = p.models ?? null;
     groups.push({
       name,
       ratio,
       svip_ratio: u.svip_ratio ?? null,
       description: p.description ?? u.description ?? null,
-      model_count: p.model_count ?? null,
+      model_count: models ? models.length : null,
+      models,
+      platform: null,
     });
     if (groups.length >= MAX_GROUPS) break;
   }
@@ -217,10 +273,82 @@ function platformLabel(platform: unknown): string | null {
 }
 
 /**
+ * sub2api 模型定价（pricing 字段，单价为美元/token，未乘分组倍率）。
+ * billing_mode 为 token 时取输入/输出价，其余（per_request / image / video）取按次价。
+ */
+export function parseSub2apiModel(m: unknown): GroupModel | null {
+  if (!isRecord(m)) return null;
+  const name = cleanModelName(m.name);
+  if (!name) return null;
+  const p = isRecord(m.pricing) ? m.pricing : null;
+  const mode = p && typeof p.billing_mode === 'string' && p.billing_mode ? p.billing_mode : 'token';
+  if (mode !== 'token') {
+    const req = p ? toRatio(p.per_request_price) : null;
+    return { name, billing: 'request', input: null, output: null, request: req === null ? null : roundPrice(req) };
+  }
+  const input = p ? toRatio(p.input_price) : null;
+  const output = p ? toRatio(p.output_price) : null;
+  return {
+    name,
+    billing: 'token',
+    input: input === null ? null : roundPrice(input * 1e6),
+    output: output === null ? null : roundPrice(output * 1e6),
+    request: null,
+  };
+}
+
+/** 解析模型列表，同名模型只保留第一个（后面的有价格而第一个没有时替换） */
+function parseSub2apiModels(list: unknown): GroupModel[] {
+  if (!Array.isArray(list)) return [];
+  const out: GroupModel[] = [];
+  const idx = new Map<string, number>();
+  for (const raw of list) {
+    const m = parseSub2apiModel(raw);
+    if (!m) continue;
+    const at = idx.get(m.name);
+    if (at !== undefined) {
+      const prev = out[at];
+      if (prev.input === null && prev.request === null && (m.input !== null || m.request !== null)) out[at] = m;
+      continue;
+    }
+    if (out.length >= MAX_MODELS_PER_GROUP) break;
+    idx.set(m.name, out.length);
+    out.push(m);
+  }
+  return out;
+}
+
+/**
+ * 解析 /api/v1/channels/available：渠道 → 平台 → { groups, supported_models }。
+ * 返回 分组 ID → 该分组可用的模型。
+ */
+export function parseSub2apiChannels(data: unknown): Map<string, GroupModel[]> {
+  const raw = new Map<string, unknown[]>();
+  if (!Array.isArray(data)) return new Map();
+  for (const ch of data) {
+    if (!isRecord(ch) || !Array.isArray(ch.platforms)) continue;
+    for (const sec of ch.platforms) {
+      if (!isRecord(sec) || !Array.isArray(sec.groups) || !Array.isArray(sec.supported_models)) continue;
+      for (const g of sec.groups) {
+        if (!isRecord(g) || (typeof g.id !== 'number' && typeof g.id !== 'string')) continue;
+        const key = String(g.id);
+        let list = raw.get(key);
+        if (!list) raw.set(key, (list = []));
+        list.push(...sec.supported_models);
+      }
+    }
+  }
+  const out = new Map<string, GroupModel[]>();
+  for (const [id, list] of raw) out.set(id, parseSub2apiModels(list));
+  return out;
+}
+
+/**
  * 把 sub2api 的分组列表（/groups/available 或 model-plaza 的 groups）转成 PriceGroup。
  * 倍率取实际生效的：个人专属倍率（/groups/rates 或 user_rate_multiplier）优先，否则用分组倍率。
+ * 模型来自分组自带的 models（模型广场），或 modelsByGroupId（/channels/available）。
  */
-export function parseSub2apiGroups(list: unknown, userRates?: unknown): PriceGroup[] {
+export function parseSub2apiGroups(list: unknown, userRates?: unknown, modelsByGroupId?: Map<string, GroupModel[]>): PriceGroup[] {
   if (!Array.isArray(list)) return [];
   const rates = isRecord(userRates) ? userRates : {};
   const groups: PriceGroup[] = [];
@@ -251,13 +379,20 @@ export function parseSub2apiGroups(list: unknown, userRates?: unknown): PriceGro
       userRatio !== null && baseRatio !== null && userRatio !== baseRatio ? `个人倍率（原 ${baseRatio}x）` : null,
     ].filter(Boolean);
     const desc = cleanDesc(g.description);
+    const models = Array.isArray(g.models)
+      ? parseSub2apiModels(g.models)
+      : idKey !== null && modelsByGroupId?.has(idKey)
+        ? modelsByGroupId.get(idKey)!
+        : null;
 
     groups.push({
       name,
       ratio,
       svip_ratio: null,
       description: cleanDesc([tags.join(' · '), desc].filter(Boolean).join(' — ')),
-      model_count: Array.isArray(g.models) ? g.models.length : null,
+      model_count: models ? models.length : null,
+      models,
+      platform: typeof g.platform === 'string' && g.platform.trim() ? g.platform.trim().toLowerCase().slice(0, 30) : null,
     });
   }
 
@@ -469,19 +604,27 @@ async function fetchSub2apiPriceGroups(
   const { accessToken, refreshToken } = await sub2apiLogin(origin, creds);
   try {
     const auth = { headers: { Authorization: `Bearer ${accessToken}` } };
-    const [available, rates] = await Promise.allSettled([
+    const [available, rates, channels] = await Promise.allSettled([
       fetchSub2api(`${origin}/api/v1/groups/available`, auth),
       fetchSub2api(`${origin}/api/v1/groups/rates`, auth),
+      fetchSub2api(`${origin}/api/v1/channels/available`, auth),
     ]);
     if (available.status === 'rejected') {
       if (available.reason instanceof UnsafeUrlError) throw available.reason;
       throw new Error(`sub2api 已登录，但读取分组失败：${describeError(available.reason)}`);
     }
-    const groups = parseSub2apiGroups(available.value, rates.status === 'fulfilled' ? rates.value : undefined);
+    // 站点关闭了「可用渠道」功能时返回空列表，此时分组没有模型数据
+    const modelsByGroup = channels.status === 'fulfilled' ? parseSub2apiChannels(channels.value) : new Map<string, GroupModel[]>();
+    const groups = parseSub2apiGroups(
+      available.value,
+      rates.status === 'fulfilled' ? rates.value : undefined,
+      modelsByGroup.size ? modelsByGroup : undefined
+    );
     if (!groups.length) throw new Error('sub2api 已登录，但该账号没有可用分组');
 
     const sources = ['/api/v1/groups/available'];
     if (rates.status === 'fulfilled') sources.push('/api/v1/groups/rates');
+    if (modelsByGroup.size) sources.push('/api/v1/channels/available');
     return { origin, architecture: 'sub2api', groups, sources };
   } finally {
     await sub2apiLogout(origin, accessToken, refreshToken);

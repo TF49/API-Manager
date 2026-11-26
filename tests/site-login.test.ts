@@ -71,7 +71,7 @@ describe('toPublicSite', () => {
       login_email: 'a@b.com',
       login_password_encrypted: 'deadbeef:cafe',
     });
-    expect(out).toEqual({ id: 1, name: 's', api_key_masked: null, login_email: 'a@b.com', has_login_password: true });
+    expect(out).toEqual({ id: 1, name: 's', login_email: 'a@b.com', has_login_password: true });
     expect(JSON.stringify(out)).not.toContain('deadbeef');
   });
 });

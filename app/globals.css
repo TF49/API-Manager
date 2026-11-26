@@ -132,7 +132,7 @@ a, button, input, select, textarea {
 /* Site list (table-style rows) */
 .site-list-grid {
   display: grid;
-  grid-template-columns: minmax(160px, 1.3fr) minmax(160px, 1.4fr) minmax(140px, 1fr) 120px 150px 270px;
+  grid-template-columns: minmax(160px, 1.3fr) minmax(160px, 1.5fr) 90px 80px minmax(150px, 1fr) 250px;
   gap: 16px;
   align-items: center;
 }
@@ -210,3 +210,7 @@ a, button, input, select, textarea {
   border-color: rgba(239, 68, 68, 0.25);
   color: #dc2626;
 }
+
+/* Navbar links: icon-only on phones */
+.nav-link { padding: 6px 9px; }
+@media (min-width: 640px) { .nav-link { padding: 6px 14px; } }
