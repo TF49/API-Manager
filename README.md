@@ -62,7 +62,7 @@ npm run dev
 | 鉴权位置 | `proxy.ts` 只做第一道粗筛；**每个 API 路由**都用 `withAuth()` 在数据旁再校验一次 |
 | 审计 | `auth_audit_log` 记录登录成功、失败、被锁、登出、改密、禁用 |
 | 安全响应头 | CSP、HSTS、`X-Frame-Options: DENY`、`nosniff`、`Referrer-Policy: no-referrer`、COOP/CORP |
-| SSRF | 服务器请求站点 `base_url` 时，在**建立连接时**校验 DNS 结果，禁止访问内网、本机、云元数据和保留地址（防 DNS rebinding）；只跟随同主机跳转，API Key 不会被带到其他域名 |
+| SSRF | 服务器请求站点 `base_url` 时，在**建立连接时**校验 DNS 结果，禁止访问内网、本机、云元数据和保留地址（防 DNS rebinding）；只跟随同主机跳转，登录凭据不会被带到其他域名 |
 | 启动自检 | 生产环境缺少 `APP_ORIGIN`、`TRUST_PROXY`，或 `ENCRYPT_SECRET` 不合格时直接拒绝启动 |
 
 > CSP 说明：项目开启了 `cacheComponents`，它和 nonce 型 CSP 不兼容，所以 `script-src` 带 `'unsafe-inline'`，其他指令都已收紧。会话 Cookie 是 HttpOnly，脚本读不到。
@@ -136,7 +136,7 @@ systemctl restart api-manager             # 重启
 cd /opt/api-manager && npm run user:list  # 账号管理（user:create / user:passwd / user:disable / auth:unlock ...）
 ```
 
-**一定要备份 `/opt/api-manager/.env.production.local`**：丢了里面的 `ENCRYPT_SECRET`，库里所有 API Key 和 sub2api 登录密码都无法解密。
+**一定要备份 `/opt/api-manager/.env.production.local`**：丢了里面的 `ENCRYPT_SECRET`，库里所有 sub2api 登录密码都无法解密。
 
 ### 环境变量参考
 
@@ -144,7 +144,7 @@ cd /opt/api-manager && npm run user:list  # 账号管理（user:create / user:pa
 |---|---|
 | `PRICE_REFRESH_MINUTES` | 可选。定时同步间隔（分钟），默认 30，设为 `0` 关闭定时同步 |
 | `DB_HOST` `DB_PORT` `DB_USERNAME` `DB_PASSWORD` `DB_NAME` | MySQL 连接信息 |
-| `ENCRYPT_SECRET` | 加密 sub2api 登录密码（以及旧版本保存的 API Key）的密钥，至少 32 位，不能是默认值 |
+| `ENCRYPT_SECRET` | 加密 sub2api 登录密码的密钥，至少 32 位，不能是默认值 |
 | `APP_ORIGIN` | 对外访问地址，必须是 https，例如 `https://1.2.3.4:8443` |
 | `TRUST_PROXY` | 设为 `1`，信任 Nginx 传入的 `X-Real-IP` |
 | `SSRF_ALLOWED_HOSTS` | 可选。允许访问的内网主机，逗号分隔，例如同机部署的中转 `localhost` |
@@ -154,7 +154,7 @@ cd /opt/api-manager && npm run user:list  # 账号管理（user:create / user:pa
 
 ### 迁移旧数据时更换加密密钥
 
-如果要把用默认密钥加密的旧数据搬到线上，先重新加密（API Key 和 sub2api 登录密码一起处理）：
+如果要把用默认密钥加密的旧数据搬到线上，先重新加密（sub2api 登录密码）：
 
 ```bash
 DRY_RUN=1 NEW_ENCRYPT_SECRET=<新密钥> npm run secret:rotate   # 演练，不写库

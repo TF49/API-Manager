@@ -37,7 +37,7 @@ async function initDB() {
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(100) NOT NULL COMMENT '站点名称',
       base_url VARCHAR(500) NOT NULL COMMENT 'Base URL',
-      api_key_encrypted TEXT DEFAULT NULL COMMENT '加密后的 API Key(可选,仅连通/模型测试需要)',
+      api_key_encrypted TEXT DEFAULT NULL COMMENT '已废弃:旧版本的 API Key,迁移时清空',
       group_tag VARCHAR(100) DEFAULT NULL COMMENT '分组标签',
       notes TEXT DEFAULT NULL COMMENT '备注',
       status ENUM('unknown','ok','error','quota') DEFAULT 'unknown' COMMENT '状态',
@@ -47,10 +47,11 @@ async function initDB() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
-  // API Key is optional: group/ratio fetching works without one
+  // API Key is no longer used (request testing was removed): keep the column, wipe stored keys
   await conn.query(
-    `ALTER TABLE sites MODIFY COLUMN api_key_encrypted TEXT DEFAULT NULL COMMENT '加密后的 API Key(可选,仅连通/模型测试需要)'`
+    `ALTER TABLE sites MODIFY COLUMN api_key_encrypted TEXT DEFAULT NULL COMMENT '已废弃:旧版本的 API Key,迁移时清空'`
   );
+  await conn.query('UPDATE sites SET api_key_encrypted = NULL WHERE api_key_encrypted IS NOT NULL');
 
   // sub2api site account: only used to log in and read groups when the model plaza is not public
   await ensureColumn(conn, dbName, 'sites', 'login_email', "VARCHAR(255) DEFAULT NULL COMMENT 'sub2api 登录邮箱(可选)' AFTER api_key_encrypted");
