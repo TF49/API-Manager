@@ -3,19 +3,19 @@ import type { RowDataPacket } from 'mysql2/promise';
 import pool from '@/lib/db';
 import { withAuth } from '@/lib/auth/guard';
 import { UnsafeUrlError } from '@/lib/net/safe-fetch';
-import { fetchPriceGroups } from '@/lib/price-groups';
+import { fetchPriceGroups, PriceGroupsAuthError } from '@/lib/price-groups';
+import { schemaErrorMessage, siteCredentials } from '@/lib/site-login';
 
 interface SiteRow extends RowDataPacket {
   id: number;
   name: string;
   base_url: string;
+  login_email: string | null;
+  login_password_encrypted: string | null;
 }
 
 function dbErrorMessage(err: unknown, fallback: string): string {
-  if (err && typeof err === 'object' && 'code' in err && err.code === 'ER_NO_SUCH_TABLE') {
-    return '数据表不存在，请先运行 npm run db:init 完成数据库迁移';
-  }
-  return err instanceof Error ? err.message : fallback;
+  return schemaErrorMessage(err) ?? (err instanceof Error ? err.message : fallback);
 }
 
 // GET /api/sites/[id]/price-groups - 已保存的分组倍率
@@ -42,19 +42,19 @@ async function handlePOST(_req: NextRequest, { params }: { params: Promise<{ id:
   let siteName = '';
 
   try {
-    const [sites] = await pool.query<SiteRow[]>('SELECT id, name, base_url FROM sites WHERE id = ?', [id]);
+    const [sites] = await pool.query<SiteRow[]>('SELECT id, name, base_url, login_email, login_password_encrypted FROM sites WHERE id = ?', [id]);
     if (!sites.length) return NextResponse.json({ success: false, error: '站点不存在' }, { status: 404 });
     const site = sites[0];
     siteName = site.name;
 
     let result;
     try {
-      result = await fetchPriceGroups(site.base_url);
+      result = await fetchPriceGroups(site.base_url, { sub2api: siteCredentials(site) });
     } catch (err: unknown) {
       const latency = Date.now() - start;
       const msg = err instanceof Error ? err.message : '获取分组失败';
       await logHistory(id, siteName, 'error', latency, msg.slice(0, 1000));
-      const status = err instanceof UnsafeUrlError ? 400 : 502;
+      const status = err instanceof UnsafeUrlError ? 400 : err instanceof PriceGroupsAuthError ? 422 : 502;
       return NextResponse.json({ success: false, error: msg }, { status });
     }
 
@@ -93,7 +93,13 @@ async function handlePOST(_req: NextRequest, { params }: { params: Promise<{ id:
 
     return NextResponse.json({
       success: true,
-      data: { count: result.groups.length, latency_ms: latency, origin: result.origin, sources: result.sources },
+      data: {
+        count: result.groups.length,
+        latency_ms: latency,
+        origin: result.origin,
+        architecture: result.architecture,
+        sources: result.sources,
+      },
     });
   } catch (err: unknown) {
     const msg = dbErrorMessage(err, '获取分组失败');

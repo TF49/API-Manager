@@ -1,19 +1,32 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { Globe, Loader2, Search, XCircle, Clock, X } from 'lucide-react';
+import { Globe, Loader2, Search, XCircle, Clock, X, KeyRound } from 'lucide-react';
 import BlurText from '@/components/reactbits/BlurText';
 import SpotlightCard from '@/components/reactbits/SpotlightCard';
 import PriceGroupList, { ratioRange, type PriceGroupView } from '@/components/PriceGroupList';
 
 interface LookupResult {
   origin: string;
+  architecture: 'new-api' | 'sub2api';
   groups: PriceGroupView[];
   sources: string[];
   latency_ms: number;
 }
 
 const RECENT_KEY = 'price-lookup:recent';
+
+const loginInputStyle: React.CSSProperties = {
+  flex: '1 1 200px',
+  minWidth: 0,
+  background: 'var(--card)',
+  border: '1px solid var(--border)',
+  borderRadius: 10,
+  padding: '9px 12px',
+  fontSize: 13,
+  color: 'var(--foreground)',
+  outline: 'none',
+};
 const RECENT_MAX = 6;
 
 function readRecent(): string[] {
@@ -39,6 +52,10 @@ export default function PriceLookupPage() {
   const [error, setError] = useState('');
   const [result, setResult] = useState<LookupResult | null>(null);
   const [recent, setRecent] = useState<string[]>([]);
+  // sub2api 登录信息：只随本次查询发送，不保存（也不写入 localStorage）
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
 
   useEffect(() => {
     // localStorage 只能在客户端读取，挂载后再同步
@@ -57,7 +74,10 @@ export default function PriceLookupPage() {
       const res = await fetch('/api/price-groups/lookup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: value }),
+        body: JSON.stringify({
+          url: value,
+          ...(showLogin && loginEmail.trim() ? { login_email: loginEmail, login_password: loginPassword } : {}),
+        }),
       });
       const json = await res.json();
       if (json.success) {
@@ -67,6 +87,7 @@ export default function PriceLookupPage() {
         writeRecent(next);
       } else {
         setError(json.error || '查询失败');
+        if (json.needs_login) setShowLogin(true);
       }
     } catch {
       setError('请求出错，请检查网络后重试');
@@ -98,7 +119,7 @@ export default function PriceLookupPage() {
           style={{ fontSize: 28, fontWeight: 800, color: 'var(--foreground)', letterSpacing: '-0.03em', margin: 0, marginBottom: 6 }}
         />
         <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
-          输入任意中转站地址，实时查询它的全部分组及倍率（支持 new-api / one-api 架构，结果不保存）
+          输入任意中转站地址，实时查询它的全部分组及倍率（支持 new-api / one-api / sub2api 架构，结果不保存）
         </p>
       </div>
 
@@ -162,6 +183,53 @@ export default function PriceLookupPage() {
             {loading ? '查询中...' : '查询'}
           </button>
         </form>
+
+        <div style={{ marginTop: 10 }}>
+          <button
+            type="button"
+            onClick={() => setShowLogin((v) => !v)}
+            aria-expanded={showLogin}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              padding: 0,
+              fontSize: 12,
+              color: 'var(--muted)',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+            }}
+          >
+            <KeyRound size={12} />
+            {showLogin ? '收起 sub2api 登录' : 'sub2api 站点需要登录？填写账号'}
+          </button>
+          {showLogin && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
+              <input
+                type="email"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="sub2api 登录邮箱"
+                aria-label="sub2api 登录邮箱"
+                autoComplete="off"
+                style={loginInputStyle}
+              />
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="登录密码"
+                aria-label="sub2api 登录密码"
+                autoComplete="new-password"
+                style={loginInputStyle}
+              />
+              <p style={{ flexBasis: '100%', margin: 0, fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>
+                仅在 sub2api 站点未开放模型广场时使用：自动登录读取分组后立即退出，账号只用于本次查询，不保存。
+              </p>
+            </div>
+          )}
+        </div>
 
         {recent.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
@@ -242,7 +310,7 @@ export default function PriceLookupPage() {
             <p style={{ fontSize: 12, color: 'var(--muted)', margin: 0 }}>
               共 <strong style={{ color: 'var(--foreground)' }}>{result.groups.length}</strong> 个分组
               {range && ` · 倍率 ${range}`}
-              {` · ${result.latency_ms}ms · 来源 ${result.sources.join(' + ')}`}
+              {` · ${result.architecture} · ${result.latency_ms}ms · 来源 ${result.sources.join(' + ')}`}
             </p>
           </div>
           <PriceGroupList key={result.origin} groups={result.groups} />

@@ -4,6 +4,18 @@
 
 技术栈：Next.js 16 (App Router) · React 19 · MySQL · Tailwind CSS 4
 
+## 分组倍率获取
+
+站点详情页的「获取分组」和「分组查询」页会自动识别站点架构：
+
+| 架构 | 数据来源 | 需要凭据 |
+|---|---|---|
+| new-api / one-api | `/api/pricing`、`/api/user/groups` | 不需要 |
+| sub2api（已开放模型广场） | `/api/v1/model-plaza` | 不需要 |
+| sub2api（未开放模型广场） | 登录后读 `/api/v1/groups/available`、`/api/v1/groups/rates` | 站点账号邮箱和密码 |
+
+sub2api 站点没开放模型广场时，在「编辑站点 → sub2api 登录」里填写账号。获取分组时会自动登录，读完立即退出（撤销本次 refresh token）。密码用 `ENCRYPT_SECRET` 加密存储，不会返回给浏览器。读到的是这个账号能用的分组，倍率是实际生效的倍率（有个人专属倍率时优先用它）。站点开启了验证码、两步验证或后台模式时，无法自动登录。
+
 ## 本地开发
 
 ```bash
@@ -106,14 +118,14 @@ systemctl restart api-manager             # 重启
 cd /opt/api-manager && npm run user:list  # 账号管理（user:create / user:passwd / user:disable / auth:unlock ...）
 ```
 
-**一定要备份 `/opt/api-manager/.env.production.local`**：丢了里面的 `ENCRYPT_SECRET`，库里所有 API Key 都无法解密。
+**一定要备份 `/opt/api-manager/.env.production.local`**：丢了里面的 `ENCRYPT_SECRET`，库里所有 API Key 和 sub2api 登录密码都无法解密。
 
 ### 环境变量参考
 
 | 变量 | 说明 |
 |---|---|
 | `DB_HOST` `DB_PORT` `DB_USERNAME` `DB_PASSWORD` `DB_NAME` | MySQL 连接信息 |
-| `ENCRYPT_SECRET` | 加密 API Key 的密钥，至少 32 位，不能是默认值 |
+| `ENCRYPT_SECRET` | 加密 API Key 和 sub2api 登录密码的密钥，至少 32 位，不能是默认值 |
 | `APP_ORIGIN` | 对外访问地址，必须是 https，例如 `https://1.2.3.4:8443` |
 | `TRUST_PROXY` | 设为 `1`，信任 Nginx 传入的 `X-Real-IP` |
 | `SSRF_ALLOWED_HOSTS` | 可选。允许访问的内网主机，逗号分隔，例如同机部署的中转 `localhost` |
@@ -123,7 +135,7 @@ cd /opt/api-manager && npm run user:list  # 账号管理（user:create / user:pa
 
 ### 迁移旧数据时更换加密密钥
 
-如果要把用默认密钥加密的旧数据搬到线上，先重新加密：
+如果要把用默认密钥加密的旧数据搬到线上，先重新加密（API Key 和 sub2api 登录密码一起处理）：
 
 ```bash
 DRY_RUN=1 NEW_ENCRYPT_SECRET=<新密钥> npm run secret:rotate   # 演练，不写库

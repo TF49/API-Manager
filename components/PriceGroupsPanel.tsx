@@ -61,7 +61,7 @@ export default function PriceGroupsPanel({ siteId }: { siteId: string }) {
       const json = await res.json();
       if (json.success) {
         await load();
-        toast(`已获取 ${json.data.count} 个分组（${json.data.latency_ms}ms）`, 'success');
+        toast(`已获取 ${json.data.count} 个分组（${json.data.architecture} · ${json.data.latency_ms}ms）`, 'success');
       } else {
         toast(`获取分组失败：${json.error}`, 'error');
       }
@@ -144,7 +144,7 @@ export default function PriceGroupsPanel({ siteId }: { siteId: string }) {
             color: loadError ? '#dc2626' : 'var(--muted)',
           }}
         >
-          {loadError || '暂无分组数据。点击「获取分组」从站点读取全部分组及倍率（支持 new-api / one-api 架构的站点）'}
+          {loadError || '暂无分组数据。点击「获取分组」从站点读取全部分组及倍率（支持 new-api / one-api / sub2api 架构；sub2api 站点未开放模型广场时，需在编辑站点里填写登录账号）'}
         </div>
       ) : (
         <PriceGroupList groups={groups} />

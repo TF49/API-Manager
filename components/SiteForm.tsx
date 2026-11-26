@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { PRESET_GROUPS } from '@/lib/groups';
 
 interface Props {
@@ -12,6 +12,8 @@ interface Props {
     group_tag?: string | null;
     notes?: string | null;
     api_key_masked?: string | null;
+    login_email?: string | null;
+    has_login_password?: boolean;
   };
   groups: string[];
   onSuccess: () => void;
@@ -94,15 +96,21 @@ function FormInput({
 export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: Props) {
   const isEdit = !!initial.id;
   const hasStoredKey = isEdit && !!initial.api_key_masked;
+  const hasStoredLogin = isEdit && !!initial.login_email && !!initial.has_login_password;
   const [form, setForm] = useState({
     name: initial.name || '',
     base_url: initial.base_url || '',
     api_key: '',
     group_tag: initial.group_tag || '',
     notes: initial.notes || '',
+    login_email: initial.login_email || '',
+    login_password: '',
   });
   const [clearKey, setClearKey] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [showLogin, setShowLogin] = useState(hasStoredLogin);
+  const [clearLogin, setClearLogin] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -122,7 +130,11 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, clear_api_key: clearKey && !form.api_key.trim() }),
+        body: JSON.stringify({
+          ...form,
+          clear_api_key: clearKey && !form.api_key.trim(),
+          clear_login: clearLogin,
+        }),
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
@@ -204,6 +216,108 @@ export default function SiteForm({ initial = {}, groups, onSuccess, onCancel }: 
             />
             清除已保存的 API Key
           </label>
+        )}
+      </div>
+
+      <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: showLogin ? '10px 12px 12px' : '0 12px' }}>
+        <button
+          type="button"
+          onClick={() => setShowLogin((v) => !v)}
+          aria-expanded={showLogin}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            background: 'transparent',
+            border: 'none',
+            padding: showLogin ? '0 0 10px' : '10px 0',
+            cursor: 'pointer',
+            color: 'var(--muted)',
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: '0.03em',
+            textAlign: 'left',
+          }}
+        >
+          <span>
+            sub2api 登录
+            <span style={{ color: 'var(--muted-alt)', fontWeight: 400, marginLeft: 6 }}>
+              {hasStoredLogin && !clearLogin ? `（已保存：${initial.login_email}）` : '（可选，仅 sub2api 站点获取分组需要）'}
+            </span>
+          </span>
+          {showLogin ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {showLogin && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <p style={{ margin: 0, fontSize: 12, color: 'var(--muted-alt)', lineHeight: 1.6 }}>
+              sub2api 站点没开放模型广场时，分组接口需要登录才能访问。填写后，获取分组时会用这个账号自动登录，读完立即退出。
+              站点开启了验证码或两步验证时无法自动登录。密码加密存储，不会返回给浏览器。
+            </p>
+            <FormInput
+              label="登录邮箱"
+              type="email"
+              autoComplete="off"
+              placeholder="you@example.com"
+              value={form.login_email}
+              disabled={clearLogin}
+              onChange={(e) => set('login_email', e.target.value)}
+              style={{ opacity: clearLogin ? 0.5 : 1 }}
+            />
+            <FormInput
+              label="登录密码"
+              hint={hasStoredLogin ? '（留空则不修改）' : undefined}
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="new-password"
+              placeholder={hasStoredLogin ? '已保存，留空保持不变' : 'sub2api 账号密码'}
+              value={form.login_password}
+              disabled={clearLogin}
+              onChange={(e) => set('login_password', e.target.value)}
+              style={{ opacity: clearLogin ? 0.5 : 1 }}
+              rightSlot={
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    padding: 4,
+                    borderRadius: 6,
+                  }}
+                >
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              }
+            />
+            {hasStoredLogin && (
+              <label
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 12,
+                  color: 'var(--muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={clearLogin}
+                  onChange={(e) => {
+                    setClearLogin(e.target.checked);
+                    if (e.target.checked) set('login_password', '');
+                  }}
+                />
+                清除已保存的登录信息
+              </label>
+            )}
+          </div>
         )}
       </div>
 

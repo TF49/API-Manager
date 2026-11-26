@@ -31,6 +31,8 @@ interface Site {
   name: string;
   base_url: string;
   api_key_masked: string | null;
+  login_email?: string | null;
+  has_login_password?: boolean;
   group_tag: string | null;
   notes: string | null;
   status: 'unknown' | 'ok' | 'error' | 'quota' | 'timeout';

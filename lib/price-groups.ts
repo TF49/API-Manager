@@ -1,12 +1,19 @@
 import { safeFetch, UnsafeUrlError } from '@/lib/net/safe-fetch';
 
 /**
- * 获取中转站（new-api / one-api 系）的计费分组及倍率。
+ * 获取中转站的计费分组及倍率，自动识别架构。
  *
- * 数据来源（均为站点公开接口，不发送任何 API Key）：
+ * new-api / one-api 系（均为站点公开接口，不发送任何凭据）：
  *  - GET /api/pricing      → group_ratio（倍率）、usable_group（说明）、data[].enable_groups（各分组可用模型）
  *  - GET /api/user/groups  → { [分组]: { ratio, desc, svip_ratio? } }
- * 两者合并，任一可用即可。
+ *  两者合并，任一可用即可。
+ *
+ * sub2api（响应格式为 { code: 0, message, data }）：
+ *  - GET /api/v1/settings/public → 识别架构、模型广场开关、验证码开关
+ *  - GET /api/v1/model-plaza     → 管理员开启模型广场时公开返回全部分组、倍率和模型
+ *  - 未开放广场时，用站点账号登录（POST /api/v1/auth/login）拿 JWT，
+ *    再读 GET /api/v1/groups/available（可用分组）和 GET /api/v1/groups/rates（个人专属倍率），
+ *    读完立即调用 /api/v1/auth/logout 撤销本次登录的 refresh token。
  */
 
 export interface PriceGroup {
@@ -19,10 +26,31 @@ export interface PriceGroup {
   model_count: number | null;
 }
 
+export type SiteArchitecture = 'new-api' | 'sub2api';
+
 export interface PriceGroupsResult {
   origin: string;
+  architecture: SiteArchitecture;
   groups: PriceGroup[];
   sources: string[];
+}
+
+/** sub2api 站点账号，仅在站点未开放模型广场时用于登录读取分组 */
+export interface Sub2apiCredentials {
+  email: string;
+  password: string;
+}
+
+export interface FetchPriceGroupsOptions {
+  sub2api?: Sub2apiCredentials | null;
+}
+
+/** 需要用户补充凭据或调整站点设置才能继续的错误 */
+export class PriceGroupsAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PriceGroupsAuthError';
+  }
 }
 
 const MAX_GROUPS = 500;
@@ -140,6 +168,107 @@ export function mergePriceGroups(pricing: GroupMap, userGroups: GroupMap): Price
   return groups.sort((a, b) => (a.ratio ?? Infinity) - (b.ratio ?? Infinity) || a.name.localeCompare(b.name));
 }
 
+// ---------------------------------------------------------------------------
+// sub2api
+// ---------------------------------------------------------------------------
+
+export interface Sub2apiSettings {
+  modelPlazaEnabled: boolean;
+  modelPlazaRequireAuth: boolean;
+  /** 登录开启的人机验证名称；null 表示未开启 */
+  captcha: string | null;
+  backendMode: boolean;
+}
+
+/** 解析 /api/v1/settings/public；不是 sub2api 站点时返回 null */
+export function parseSub2apiSettings(json: unknown): Sub2apiSettings | null {
+  if (!isRecord(json) || json.code !== 0 || !isRecord(json.data)) return null;
+  const d = json.data;
+  // sub2api 公开设置的固定字段（new-api 没有这个接口）
+  if (typeof d.registration_enabled !== 'boolean' && typeof d.model_plaza_enabled !== 'boolean') return null;
+
+  const captchas: Array<[string, string]> = [
+    ['turnstile_enabled', 'Cloudflare Turnstile'],
+    ['tencent_captcha_enabled', '腾讯云验证码'],
+    ['aliyun_captcha_enabled', '阿里云验证码'],
+  ];
+  const captcha = captchas.find(([key]) => d[key] === true)?.[1] ?? null;
+
+  return {
+    modelPlazaEnabled: d.model_plaza_enabled === true,
+    modelPlazaRequireAuth: d.model_plaza_require_auth === true,
+    captcha,
+    backendMode: d.backend_mode_enabled === true,
+  };
+}
+
+const SUB2API_PLATFORMS: Record<string, string> = {
+  anthropic: 'Claude',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+  antigravity: 'Antigravity',
+  grok: 'Grok',
+};
+
+function platformLabel(platform: unknown): string | null {
+  if (typeof platform !== 'string' || !platform.trim()) return null;
+  const p = platform.trim();
+  return SUB2API_PLATFORMS[p.toLowerCase()] ?? p.slice(0, 30);
+}
+
+/**
+ * 把 sub2api 的分组列表（/groups/available 或 model-plaza 的 groups）转成 PriceGroup。
+ * 倍率取实际生效的：个人专属倍率（/groups/rates 或 user_rate_multiplier）优先，否则用分组倍率。
+ */
+export function parseSub2apiGroups(list: unknown, userRates?: unknown): PriceGroup[] {
+  if (!Array.isArray(list)) return [];
+  const rates = isRecord(userRates) ? userRates : {};
+  const groups: PriceGroup[] = [];
+  const seen = new Set<string>();
+
+  for (const g of list) {
+    if (groups.length >= MAX_GROUPS) break;
+    if (!isRecord(g) || typeof g.name !== 'string') continue;
+    if (typeof g.status === 'string' && g.status !== 'active') continue;
+
+    const baseRatio = toRatio(g.rate_multiplier);
+    const idKey = typeof g.id === 'number' || typeof g.id === 'string' ? String(g.id) : null;
+    const userRatio = (idKey !== null ? toRatio(rates[idKey]) : null) ?? toRatio(g.user_rate_multiplier);
+    const ratio = userRatio ?? baseRatio;
+    if (ratio === null) continue;
+
+    const platform = platformLabel(g.platform);
+    let name = cleanName(g.name);
+    // 不同平台可能有同名分组，加平台后缀区分
+    if (name && seen.has(name) && platform) name = cleanName(`${name} (${platform})`);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+
+    const tags = [
+      platform,
+      g.subscription_type === 'subscription' ? '订阅制' : null,
+      g.is_exclusive === true ? '专属' : null,
+      userRatio !== null && baseRatio !== null && userRatio !== baseRatio ? `个人倍率（原 ${baseRatio}x）` : null,
+    ].filter(Boolean);
+    const desc = cleanDesc(g.description);
+
+    groups.push({
+      name,
+      ratio,
+      svip_ratio: null,
+      description: cleanDesc([tags.join(' · '), desc].filter(Boolean).join(' — ')),
+      model_count: Array.isArray(g.models) ? g.models.length : null,
+    });
+  }
+
+  return groups.sort((a, b) => (a.ratio ?? Infinity) - (b.ratio ?? Infinity) || a.name.localeCompare(b.name));
+}
+
+/** 解析 /api/v1/model-plaza 的 data */
+export function parseModelPlazaResponse(data: unknown): PriceGroup[] {
+  return isRecord(data) ? parseSub2apiGroups(data.groups) : [];
+}
+
 /**
  * 规范化用户随手输入的地址：去空白，缺协议时补 https://，只保留 http/https。
  * 返回 null 表示无法识别为网址。
@@ -197,9 +326,17 @@ async function readTextCapped(res: Awaited<ReturnType<typeof safeFetch>>): Promi
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function fetchJson(url: string): Promise<unknown> {
+interface RequestOptions {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+async function requestJson(url: string, init: RequestOptions = {}) {
   const res = await safeFetch(url, {
-    headers: { Accept: 'application/json' },
+    method: init.method,
+    body: init.body,
+    headers: { Accept: 'application/json', ...init.headers },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const text = await readTextCapped(res);
@@ -207,13 +344,49 @@ async function fetchJson(url: string): Promise<unknown> {
   try {
     json = JSON.parse(text);
   } catch {
-    throw new Error(`HTTP ${res.status}，返回的不是 JSON（可能不是 new-api 站点）`);
+    throw new Error(`HTTP ${res.status}，返回的不是 JSON`);
   }
+  return { res, json };
+}
+
+function upstreamMessage(json: unknown): string {
+  return isRecord(json) && typeof json.message === 'string' ? json.message.slice(0, 200) : '';
+}
+
+/** new-api 系接口：{ success, message, data } */
+async function fetchJson(url: string): Promise<unknown> {
+  const { res, json } = await requestJson(url);
   if (!res.ok || (isRecord(json) && json.success === false)) {
-    const msg = isRecord(json) && typeof json.message === 'string' ? json.message.slice(0, 200) : '';
+    const msg = upstreamMessage(json);
     throw new Error(`HTTP ${res.status}${msg ? `：${msg}` : ''}`);
   }
   return json;
+}
+
+class Sub2apiHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+  }
+}
+
+/** sub2api 接口：{ code: 0, message, data }，返回 data */
+async function fetchSub2api(url: string, init: RequestOptions = {}): Promise<unknown> {
+  const { res, json } = await requestJson(url, {
+    ...init,
+    headers: {
+      'Accept-Language': 'zh-CN',
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init.headers,
+    },
+  });
+  if (!res.ok || !isRecord(json) || json.code !== 0) {
+    const msg = upstreamMessage(json);
+    throw new Sub2apiHttpError(`HTTP ${res.status}${msg ? `：${msg}` : ''}`, res.status);
+  }
+  return json.data;
 }
 
 function describeError(err: unknown): string {
@@ -221,17 +394,112 @@ function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export async function fetchPriceGroups(baseUrl: string): Promise<PriceGroupsResult> {
+async function sub2apiLogin(origin: string, creds: Sub2apiCredentials) {
+  let data: unknown;
+  try {
+    data = await fetchSub2api(`${origin}/api/v1/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({ email: creds.email, password: creds.password }),
+    });
+  } catch (err) {
+    if (err instanceof UnsafeUrlError) throw err;
+    if (err instanceof Sub2apiHttpError && err.status >= 400 && err.status < 500 && err.status !== 429) {
+      throw new PriceGroupsAuthError(`sub2api 登录失败（${err.message}），请检查站点设置里的登录邮箱和密码`);
+    }
+    throw new Error(`sub2api 登录失败：${describeError(err)}`);
+  }
+  if (isRecord(data) && data.requires_2fa === true) {
+    throw new PriceGroupsAuthError('该 sub2api 账号开启了两步验证，无法自动登录。请在站点上关闭两步验证，或换一个没开的账号');
+  }
+  if (!isRecord(data) || typeof data.access_token !== 'string' || !data.access_token) {
+    throw new Error('sub2api 登录响应里没有 access_token');
+  }
+  return {
+    accessToken: data.access_token,
+    refreshToken: typeof data.refresh_token === 'string' ? data.refresh_token : '',
+  };
+}
+
+/** 撤销本次登录产生的 refresh token，避免在站点上堆积会话 */
+async function sub2apiLogout(origin: string, accessToken: string, refreshToken: string) {
+  if (!refreshToken) return;
+  try {
+    await fetchSub2api(`${origin}/api/v1/auth/logout`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+  } catch {
+    /* 撤销失败不影响结果，refresh token 到期后自然失效 */
+  }
+}
+
+async function fetchSub2apiPriceGroups(
+  origin: string,
+  settings: Sub2apiSettings,
+  creds: Sub2apiCredentials | null | undefined
+): Promise<PriceGroupsResult> {
+  // 1. 公开的模型广场：不需要任何凭据
+  let plazaNote: string;
+  if (settings.modelPlazaEnabled && !settings.modelPlazaRequireAuth) {
+    try {
+      const groups = parseModelPlazaResponse(await fetchSub2api(`${origin}/api/v1/model-plaza`));
+      if (groups.length) return { origin, architecture: 'sub2api', groups, sources: ['/api/v1/model-plaza'] };
+      plazaNote = '模型广场没有分组数据';
+    } catch (err) {
+      if (err instanceof UnsafeUrlError) throw err;
+      plazaNote = `模型广场读取失败（${describeError(err)}）`;
+    }
+  } else {
+    plazaNote = settings.modelPlazaEnabled ? '模型广场需要登录' : '站点未开放模型广场';
+  }
+
+  // 2. 用站点账号登录读取
+  const prefix = `这是 sub2api 站点，${plazaNote}`;
+  if (!creds) {
+    throw new PriceGroupsAuthError(`${prefix}，分组接口需要登录。请在站点设置中填写 sub2api 登录邮箱和密码后重试`);
+  }
+  if (settings.backendMode) {
+    throw new PriceGroupsAuthError(`${prefix}，且站点开启了后台模式（只允许管理员登录），无法用普通账号获取分组`);
+  }
+  if (settings.captcha) {
+    throw new PriceGroupsAuthError(`${prefix}，且登录开启了人机验证（${settings.captcha}），无法自动登录`);
+  }
+
+  const { accessToken, refreshToken } = await sub2apiLogin(origin, creds);
+  try {
+    const auth = { headers: { Authorization: `Bearer ${accessToken}` } };
+    const [available, rates] = await Promise.allSettled([
+      fetchSub2api(`${origin}/api/v1/groups/available`, auth),
+      fetchSub2api(`${origin}/api/v1/groups/rates`, auth),
+    ]);
+    if (available.status === 'rejected') {
+      if (available.reason instanceof UnsafeUrlError) throw available.reason;
+      throw new Error(`sub2api 已登录，但读取分组失败：${describeError(available.reason)}`);
+    }
+    const groups = parseSub2apiGroups(available.value, rates.status === 'fulfilled' ? rates.value : undefined);
+    if (!groups.length) throw new Error('sub2api 已登录，但该账号没有可用分组');
+
+    const sources = ['/api/v1/groups/available'];
+    if (rates.status === 'fulfilled') sources.push('/api/v1/groups/rates');
+    return { origin, architecture: 'sub2api', groups, sources };
+  } finally {
+    await sub2apiLogout(origin, accessToken, refreshToken);
+  }
+}
+
+export async function fetchPriceGroups(baseUrl: string, options: FetchPriceGroupsOptions = {}): Promise<PriceGroupsResult> {
   const failures: string[] = [];
 
   for (const origin of candidateOrigins(baseUrl)) {
-    const [pricing, userGroups] = await Promise.allSettled([
+    const [pricing, userGroups, sub2Settings] = await Promise.allSettled([
       fetchJson(`${origin}/api/pricing`),
       fetchJson(`${origin}/api/user/groups`),
+      requestJson(`${origin}/api/v1/settings/public`).then(({ json }) => parseSub2apiSettings(json)),
     ]);
 
     // SSRF 拦截等安全错误直接抛出，不再尝试其他地址
-    for (const r of [pricing, userGroups]) {
+    for (const r of [pricing, userGroups, sub2Settings]) {
       if (r.status === 'rejected' && r.reason instanceof UnsafeUrlError) throw r.reason;
     }
 
@@ -243,7 +511,12 @@ export async function fetchPriceGroups(baseUrl: string): Promise<PriceGroupsResu
       const sources: string[] = [];
       if (pricingMap.size) sources.push('/api/pricing');
       if (userMap.size) sources.push('/api/user/groups');
-      return { origin, groups, sources };
+      return { origin, architecture: 'new-api', groups, sources };
+    }
+
+    // 识别为 sub2api 后，它的结果或错误就是最终结论，不再尝试其他地址
+    if (sub2Settings.status === 'fulfilled' && sub2Settings.value) {
+      return fetchSub2apiPriceGroups(origin, sub2Settings.value, options.sub2api);
     }
 
     const reasons = [
@@ -253,5 +526,7 @@ export async function fetchPriceGroups(baseUrl: string): Promise<PriceGroupsResu
     failures.push(`${origin}（${reasons.join('；')}）`);
   }
 
-  throw new Error(`未能获取分组信息，站点可能不是 new-api/one-api 架构，或价格页需要登录。尝试过：${failures.join('，')}`);
+  throw new Error(
+    `未能获取分组信息，站点可能不是 new-api / one-api / sub2api 架构，或价格页需要登录。尝试过：${failures.join('，')}`
+  );
 }

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
-import { encrypt, maskStoredKey } from '@/lib/crypto';
+import { encrypt } from '@/lib/crypto';
 import { withAuth } from '@/lib/auth/guard';
 import { assertSafeUpstreamUrl, UnsafeUrlError } from '@/lib/net/safe-fetch';
+import { readLoginInput, resolveLoginColumns, schemaErrorMessage, SiteLoginInputError, toPublicSite } from '@/lib/site-login';
 
 // GET /api/sites - 获取所有站点
 async function handleGET(req: NextRequest) {
@@ -10,7 +11,8 @@ async function handleGET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const group = searchParams.get('group');
 
-    let sql = 'SELECT id, name, base_url, api_key_encrypted, group_tag, notes, status, last_tested_at, created_at, updated_at FROM sites';
+    let sql =
+      'SELECT id, name, base_url, api_key_encrypted, login_email, login_password_encrypted, group_tag, notes, status, last_tested_at, created_at, updated_at FROM sites';
     const params: string[] = [];
     if (group) {
       sql += ' WHERE group_tag = ?';
@@ -19,15 +21,9 @@ async function handleGET(req: NextRequest) {
     sql += ' ORDER BY created_at DESC';
 
     const [rows] = await pool.query(sql, params) as any[];
-    const sites = rows.map((r: any) => ({
-      ...r,
-      api_key_masked: maskStoredKey(r.api_key_encrypted),
-      api_key_encrypted: undefined,
-    }));
-
-    return NextResponse.json({ success: true, data: sites });
+    return NextResponse.json({ success: true, data: rows.map(toPublicSite) });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: schemaErrorMessage(err) ?? err.message }, { status: 500 });
   }
 }
 
@@ -55,14 +51,25 @@ async function handlePOST(req: NextRequest) {
     const trimmedKey = typeof api_key === 'string' ? api_key.trim() : '';
     const encryptedKey = trimmedKey ? encrypt(trimmedKey) : null;
 
+    // sub2api login is optional — only needed when the site's model plaza is not public
+    let login;
+    try {
+      login = resolveLoginColumns(readLoginInput(body), false, encrypt);
+    } catch (e) {
+      if (e instanceof SiteLoginInputError) {
+        return NextResponse.json({ success: false, error: e.message }, { status: 400 });
+      }
+      throw e;
+    }
+
     const [result] = await pool.query(
-      'INSERT INTO sites (name, base_url, api_key_encrypted, group_tag, notes) VALUES (?, ?, ?, ?, ?)',
-      [name, normalizedUrl, encryptedKey, group_tag || null, notes || null]
+      'INSERT INTO sites (name, base_url, api_key_encrypted, login_email, login_password_encrypted, group_tag, notes) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [name, normalizedUrl, encryptedKey, login.login_email, login.login_password_encrypted ?? null, group_tag || null, notes || null]
     ) as any[];
 
     return NextResponse.json({ success: true, data: { id: result.insertId } }, { status: 201 });
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: schemaErrorMessage(err) ?? err.message }, { status: 500 });
   }
 }
 

@@ -52,6 +52,10 @@ async function initDB() {
     `ALTER TABLE sites MODIFY COLUMN api_key_encrypted TEXT DEFAULT NULL COMMENT '加密后的 API Key(可选,仅连通/模型测试需要)'`
   );
 
+  // sub2api site account: only used to log in and read groups when the model plaza is not public
+  await ensureColumn(conn, dbName, 'sites', 'login_email', "VARCHAR(255) DEFAULT NULL COMMENT 'sub2api 登录邮箱(可选)' AFTER api_key_encrypted");
+  await ensureColumn(conn, dbName, 'sites', 'login_password_encrypted', "TEXT DEFAULT NULL COMMENT '加密后的 sub2api 登录密码(可选)' AFTER login_email");
+
   // Models table
   await conn.query(`
     CREATE TABLE IF NOT EXISTS models (
